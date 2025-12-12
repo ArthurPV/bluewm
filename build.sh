@@ -6,3 +6,4 @@ FLAGS="-std=c99 -lX11 -I ."
 
 gcc bluewm.c -o bluewm $FLAGS
 gcc bluewmbar.c -o bluewmbar $FLAGS
+gcc bluewmbg.c -o bluewmbg -lpng $FLAGS

@@ -1,4 +1,5 @@
 #include <X11/Xlib.h>
+#include <X11/XKBlib.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -11,7 +12,7 @@
 #include <bluewm.h>
 
 #define WINDOW_HEIGHT 20
-#define WINDOW_MIDDLE(font) ((WINDOW_HEIGHT / 2) + (font->ascent - (font->ascent + font->descent) / 2))
+#define WINDOW_MIDDLE(font) ((WINDOW_HEIGHT / 2) + ((font)->ascent - ((font)->ascent + (font)->descent) / 2))
 
 Display *display = NULL;
 Window window = {0};
@@ -24,11 +25,17 @@ Pixmap window_pixels = {0};
 
 static void draw_bg__BlueWMBar(void);
 
+static const char *get_current_keyboard_layout__BlueWMBar(void);
+
+static void draw_keyboard_layout__BlueWMBar(void);
+
 static void draw_date__BlueWMBar(void);
 
 static void draw__BlueWMBar(void);
 
 static void set_font__BlueWMBar(void);
+
+static void close__BlueWMBar(void);
 
 void draw_bg__BlueWMBar(void)
 {
@@ -36,12 +43,22 @@ void draw_bg__BlueWMBar(void)
 	XFillRectangle(display, window_pixels, window_gc, 0, 0, window_width, window_height);
 }
 
+const char *get_current_keyboard_layout__BlueWMBar(void)
+{
+	return NULL;
+}
+
+void draw_keyboard_layout__BlueWMBar(void)
+{
+	get_current_keyboard_layout__BlueWMBar();
+}
+
 void draw_date__BlueWMBar(void)
 {
 	struct timeval tv;
 
 	if (gettimeofday(&tv, NULL) == -1) {
-		BLUE_LOG_ERROR("unable to get time of day");
+		BLUE_LOG_ERROR("unable to get time of day\n");
 	}
 
 	char date[30] = {0};
@@ -55,6 +72,7 @@ void draw_date__BlueWMBar(void)
 void draw__BlueWMBar(void)
 {	
 	draw_bg__BlueWMBar();
+	draw_keyboard_layout__BlueWMBar();
 	draw_date__BlueWMBar();
 	XCopyArea(display, window_pixels, window, window_gc, 0, 0, window_width, window_height, 0, 0);
 	XFlush(display);
@@ -63,22 +81,30 @@ void draw__BlueWMBar(void)
 void set_font__BlueWMBar(void)
 {
 	if (!(font = XLoadQueryFont(display, "fixed"))) {
-		BLUE_LOG_ERROR("unable to load font");
+		BLUE_LOG_ERROR("unable to load font\n");
 	}
 
 	XSetFont(display, window_gc, font->fid);
 }
 
+void close__BlueWMBar(void)
+{
+	XFreeGC(display, window_gc);
+	XFreePixmap(display, window_pixels);
+	XFreeFont(display, font);
+	XCloseDisplay(display);
+}
+
 int main() {
 	if (!(display = XOpenDisplay(NULL))) {
-		BLUE_LOG_ERROR("unable to open display");
+		BLUE_LOG_ERROR("unable to open display\n");
 	}
 
 	Window window_root = XDefaultRootWindow(display);
 	XWindowAttributes window_root_attr;
 
 	if (XGetWindowAttributes(display, window_root, &window_root_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get window attributes");
+		BLUE_LOG_ERROR("unable to get window attributes\n");
 	}
 
 	window_width = window_root_attr.width;
@@ -90,7 +116,7 @@ int main() {
 	window_pixels = XCreatePixmap(display, window, window_width, window_height, DefaultDepthOfScreen(default_screen));
 
 	if (XSetGraphicsExposures(display, window_gc, false) == 0) {
-		BLUE_LOG_ERROR("cannot set graphics exposures");
+		BLUE_LOG_ERROR("cannot set graphics exposures\n");
 	}
 
 	set_font__BlueWMBar();
@@ -103,5 +129,5 @@ int main() {
 		sleep(1);
 	}
 
-	XCloseDisplay(display);
+	close__BlueWMBar();
 }

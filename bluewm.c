@@ -8,12 +8,14 @@
 
 #include <bluewm.h>
 
+struct BlueWMClient {
+	Window window;
+	bool is_focused;
+};
+
 struct BlueWMScreen {
 	int screen_number;
 	struct BlueWMScreen *next;
-};
-
-struct BlueWMClient {
 };
 
 static Cursor cursor = {0};
@@ -108,7 +110,7 @@ unset_screens__BlueWM(void)
 
 int main() {
 	if (!(display = XOpenDisplay(NULL))) {
-		BLUE_LOG_ERROR("unable to open display");
+		BLUE_LOG_ERROR("unable to open display\n");
 	}
 
 	// Launch or status bar
