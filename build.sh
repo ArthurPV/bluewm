@@ -2,4 +2,7 @@
 
 set -e
 
-gcc bluewm.c -std=c99 -o bluewm -lX11
+FLAGS="-std=c99 -lX11 -I ."
+
+gcc bluewm.c -o bluewm $FLAGS
+gcc bluewmbar.c -o bluewmbar $FLAGS
