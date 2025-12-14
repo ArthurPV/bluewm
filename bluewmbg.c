@@ -23,7 +23,7 @@ static void read_png_image__BlueWMBg(const char *path, size_t *image_width_p, si
 
 static void put_image_pixels__BlueWMBg(size_t image_width, size_t image_height, uint8_t *image_pixels, XImage **ximage_p);
 
-static inline void put_image__BlueWMBg(XImage *ximage);
+static inline void put_image__BlueWMBg(size_t image_width, size_t image_height, XImage *ximage);
 
 static void read_and_put_image__BlueWMBg(const char *path);
 
@@ -48,6 +48,14 @@ void read_jpg_image__BlueWMBg(const char *path, size_t *image_width_p, size_t *i
 
 	jpeg_decompress.out_color_space = JCS_RGB;
 
+	if (jpeg_decompress.image_width > window_width) {
+		jpeg_decompress.scale_num = 1;
+		jpeg_decompress.scale_denom = jpeg_decompress.image_width / window_width;
+	} else {
+		jpeg_decompress.scale_num = window_width / jpeg_decompress.image_width;
+		jpeg_decompress.scale_denom = 1;
+	}
+
 	jpeg_start_decompress(&jpeg_decompress);
 
 	size_t image_width = jpeg_decompress.output_width;
@@ -58,7 +66,7 @@ void read_jpg_image__BlueWMBg(const char *path, size_t *image_width_p, size_t *i
 	*image_height_p = image_height;
 	*image_pixels_p = image_pixels;
 
-	while (jpeg_decompress.output_scanline < jpeg_decompress.output_height) {
+	while (jpeg_decompress.output_scanline < image_height) {
 		JSAMPROW line = image_pixels + jpeg_decompress.output_scanline * image_width * jpeg_decompress.output_components;
 
 		jpeg_read_scanlines(&jpeg_decompress, &line, 1);
@@ -116,11 +124,11 @@ void put_image_pixels__BlueWMBg(size_t image_width, size_t image_height, uint8_t
 	int depth = XDefaultDepth(display, screen_number);
 
 	char *ximage_buffer = BLUE_ZERO_ALLOC(image_width * image_height);
-	XImage *ximage = XCreateImage(display, visual, depth, ZPixmap, 0, ximage_buffer, image_width, image_height, 32, 0);
+	XImage *ximage = XCreateImage(display, visual, depth, ZPixmap, 0, ximage_buffer, image_width, image_height, 32, 0);	
 
 	for (size_t y = 0; y < image_height; ++y) {
 		for (size_t x = 0; x < image_width; ++x) {
-			uint8_t *slice = image_pixels + (y * image_width + x * 3);
+			uint8_t *slice = image_pixels + (y * image_width + x) * 3;
 			unsigned long pixel = slice[0] << 16 | slice[1] << 8 | slice[2];
 
 			XPutPixel(ximage, x, y, pixel);
@@ -130,11 +138,13 @@ void put_image_pixels__BlueWMBg(size_t image_width, size_t image_height, uint8_t
 	*ximage_p = ximage;
 }
 
-void put_image__BlueWMBg(XImage *ximage)
+void put_image__BlueWMBg(size_t image_width, size_t image_height, XImage *ximage)
 {
 	GC window_gc = XCreateGC(display, window, 0, NULL);
+	size_t src_x = image_width > window_width ? (image_width - window_width) / 2 : 0;
+	size_t src_y = image_height > window_height ? (image_height - window_height) / 2 : 0;
 
-	XPutImage(display, window, window_gc, ximage, 0, 0, 0, 0, window_width, window_height);
+	XPutImage(display, window, window_gc, ximage, src_x, src_y, 0, 0, window_width, window_height);
 	XFlush(display);
 	XFreeGC(display, window_gc);
 }
@@ -156,10 +166,9 @@ void read_and_put_image__BlueWMBg(const char *path)
 	XImage *ximage = NULL;
 
 	put_image_pixels__BlueWMBg(image_width, image_height, image_pixels, &ximage);
-	put_image__BlueWMBg(ximage);
+	put_image__BlueWMBg(image_width, image_height, ximage);
 
 	XDestroyImage(ximage);
-	// free(image_pixels);
 }
 
 void close__BlueWMBg(void)
