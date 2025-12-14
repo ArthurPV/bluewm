@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
 
@@ -34,6 +36,8 @@ static void draw_date__BlueWMBar(void);
 static void draw__BlueWMBar(void);
 
 static void set_font__BlueWMBar(void);
+
+static void handle_events__BlueWMBar(void);
 
 static void close__BlueWMBar(void);
 
@@ -87,6 +91,37 @@ void set_font__BlueWMBar(void)
 	XSetFont(display, window_gc, font->fid);
 }
 
+void handle_events__BlueWMBar(void)
+{
+	XEvent event;
+	time_t start;
+
+	while (true) {
+		while (XPending(display) > 0) {
+			XNextEvent(display, &event);
+
+			switch (event.type) {
+				case Expose:
+					draw__BlueWMBar();
+
+					break;
+				default:
+					break;
+			}
+		}
+
+		draw__BlueWMBar();
+		time(&start);
+
+		time_t current;
+
+		do {
+			time(&current);
+			usleep(100000);
+		} while (difftime(start, current) && XPending(display) == 0);
+	}
+}
+
 void close__BlueWMBar(void)
 {
 	XFreeGC(display, window_gc);
@@ -127,13 +162,8 @@ int main() {
 	}
 
 	set_font__BlueWMBar();
+	XSelectInput(display, window, ExposureMask);
 	XMapWindow(display, window);
-	XFlush(display);
-
-	while (true) {
-		draw__BlueWMBar();
-		sleep(1);
-	}
-
+	handle_events__BlueWMBar();
 	close__BlueWMBar();
 }

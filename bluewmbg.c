@@ -14,8 +14,11 @@
 
 Display *display = NULL;
 Window window = 0;
+GC window_gc = {0};
 unsigned int window_width = 0;
 unsigned int window_height = 0;
+static XImage *ximage = NULL;
+static const char *path = NULL;
 
 static void read_jpg_image__BlueWMBg(const char *path, size_t *image_width_p, size_t *image_height_p, uint8_t **image_pixels_p);
 
@@ -25,7 +28,11 @@ static void put_image_pixels__BlueWMBg(size_t image_width, size_t image_height, 
 
 static inline void put_image__BlueWMBg(size_t image_width, size_t image_height, XImage *ximage);
 
-static void read_and_put_image__BlueWMBg(const char *path);
+static void read_and_put_image__BlueWMBg(void);
+
+static void draw__BlueWMBg(void);
+
+static void handle_events__BlueWMBg(void);
 
 static void close__BlueWMBg(void);
 
@@ -140,39 +147,62 @@ void put_image_pixels__BlueWMBg(size_t image_width, size_t image_height, uint8_t
 
 void put_image__BlueWMBg(size_t image_width, size_t image_height, XImage *ximage)
 {
-	GC window_gc = XCreateGC(display, window, 0, NULL);
 	size_t src_x = image_width > window_width ? (image_width - window_width) / 2 : 0;
 	size_t src_y = image_height > window_height ? (image_height - window_height) / 2 : 0;
 
 	XPutImage(display, window, window_gc, ximage, src_x, src_y, 0, 0, window_width, window_height);
 	XFlush(display);
-	XFreeGC(display, window_gc);
 }
 
-void read_and_put_image__BlueWMBg(const char *path)
+void read_and_put_image__BlueWMBg(void)
 {
-	size_t image_width;
-	size_t image_height;
+	static size_t image_width;
+	static size_t image_height;
 	uint8_t *image_pixels;
 
-	if (strstr(path, ".png")) {
-		read_png_image__BlueWMBg(path, &image_width, &image_height, &image_pixels);
-	} else if (strstr(path, ".jpg")) {
-		read_jpg_image__BlueWMBg(path, &image_width, &image_height, &image_pixels);
-	} else {
-		BLUE_LOG_ERROR("unsupported image format");
+	if (!ximage) {
+		if (strstr(path, ".png")) {
+			read_png_image__BlueWMBg(path, &image_width, &image_height, &image_pixels);
+		} else if (strstr(path, ".jpg")) {
+			read_jpg_image__BlueWMBg(path, &image_width, &image_height, &image_pixels);
+		} else {
+			BLUE_LOG_ERROR("unsupported image format");
+		}
+
+		put_image_pixels__BlueWMBg(image_width, image_height, image_pixels, &ximage);
 	}
 
-	XImage *ximage = NULL;
-
-	put_image_pixels__BlueWMBg(image_width, image_height, image_pixels, &ximage);
 	put_image__BlueWMBg(image_width, image_height, ximage);
+}
 
-	XDestroyImage(ximage);
+void draw__BlueWMBg(void)
+{
+	XClearWindow(display, window);
+	read_and_put_image__BlueWMBg();
+}
+
+void handle_events__BlueWMBg(void)
+{
+	XEvent event;
+
+	while (true) {
+		XNextEvent(display, &event);
+
+		switch (event.type) {
+			case Expose:
+				draw__BlueWMBg();
+
+				break;
+			default:
+				break;
+		}
+	}
 }
 
 void close__BlueWMBg(void)
 {
+	XDestroyImage(ximage);
+	XFreeGC(display, window_gc);
 	XCloseDisplay(display);
 }
 
@@ -181,7 +211,7 @@ int main(int argc, char **argv) {
 		BLUE_LOG_ERROR("expected to have a path\n");
 	}
 
-	const char *path = argv[1];
+	path = argv[1];
 
 	if (!(display = XOpenDisplay(NULL))) {
 		BLUE_LOG_ERROR("unable to open display\n");
@@ -197,6 +227,7 @@ int main(int argc, char **argv) {
 	window_width = window_root_attr.width;
 	window_height = window_root_attr.height;
 	window = XCreateSimpleWindow(display, window_root, 0, 0, window_width, window_height, 0, BLUE_RGB(0, 0, 0), BLUE_RGB(255, 255, 255));
+	window_gc = XCreateGC(display, window, 0, NULL);
 
 	// https://specifications.freedesktop.org/wm/latest/ar01s05.html
 	Atom splash_atom = XInternAtom(display, "_NET_WM_WINDOW_TYPE_SPLASH", false);
@@ -205,12 +236,8 @@ int main(int argc, char **argv) {
 		BLUE_LOG_ERROR("cannot set WM_PROTOCOLS\n");
 	}
 
+	XSelectInput(display, window, ExposureMask);
 	XMapWindow(display, window);
-	read_and_put_image__BlueWMBg(path);
-
-	while (true) {
-		sleep(1);
-	}
-
+	handle_events__BlueWMBg();
 	close__BlueWMBg();
 }

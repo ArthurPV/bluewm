@@ -1,3 +1,8 @@
+#include <X11/Xlib.h>
+#include <X11/cursorfont.h>
+#define XK_MISCELLANY
+#include <X11/keysymdef.h>
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,10 +10,8 @@
 #include <stdarg.h>
 #include <assert.h>
 
-#include <X11/Xlib.h>
-#include <X11/cursorfont.h>
-
 #include <bluewm.h>
+#include <config/bluewm.h>
 
 #define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
 #define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
@@ -242,7 +245,7 @@ launch_startup_program__BlueWM(void)
 	launch_builtin_program__BlueWM("./bluewmbar", NULL);
 
 	// Launch our background
-	launch_builtin_program__BlueWM("./bluewmbg", "./bg.jpg", NULL);
+	launch_builtin_program__BlueWM("./bluewmbg", BLUE_CONFIG_BG_PATH, NULL);
 }
 
 int
@@ -330,6 +333,10 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 
 void handle_key_press_event__BlueWM(const XEvent *event)
 {
+	if (event->xkey.state & Mod4Mask && event->xkey.keycode == 36) {
+		launch_builtin_program__BlueWM("xterm", NULL);
+		printf("Mod + Enter\n");
+	}
 }
 
 void handle_key_release_event__BlueWM(const XEvent *event)
