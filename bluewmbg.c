@@ -147,8 +147,8 @@ void put_image_pixels__BlueWMBg(size_t image_width, size_t image_height, uint8_t
 
 void put_image__BlueWMBg(size_t image_width, size_t image_height, XImage *ximage)
 {
-	size_t src_x = image_width > window_width ? (image_width - window_width) / 2 : 0;
-	size_t src_y = image_height > window_height ? (image_height - window_height) / 2 : 0;
+	int src_x = image_width > window_width ? (image_width - window_width) / 2 : 0;
+	int src_y = image_height > window_height ? (image_height - window_height) / 2 : 0;
 
 	XPutImage(display, window, window_gc, ximage, src_x, src_y, 0, 0, window_width, window_height);
 	XFlush(display);
