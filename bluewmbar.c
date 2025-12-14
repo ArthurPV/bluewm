@@ -119,8 +119,14 @@ int main() {
 		BLUE_LOG_ERROR("cannot set graphics exposures\n");
 	}
 
-	set_font__BlueWMBar();
+	// https://specifications.freedesktop.org/wm/latest/ar01s05.html
+	Atom dock_atom = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", false);
 
+	if (XSetWMProtocols(display, window, &dock_atom, 1) == 0) {
+		BLUE_LOG_ERROR("cannot set WM_PROTOCOLS\n");
+	}
+
+	set_font__BlueWMBar();
 	XMapWindow(display, window);
 	XFlush(display);
 
