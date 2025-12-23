@@ -1,7 +1,6 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
-#define XK_MISCELLANY
-#include <X11/keysymdef.h>
+#include <X11/keysym.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -92,6 +91,8 @@ get_role_of_atom__BlueWM(const Atom *atom);
 static void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *screen);
 
 static void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen);
+
+static void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen);
 
 static void new_client__BlueWM(Window window, enum BlueWMClientRole role);
 
@@ -304,6 +305,12 @@ void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen)
 	XConfigureWindow(display, window, CWStackMode, &(XWindowChanges){ .stack_mode = Above });
 }
 
+void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen)
+{
+	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
+	XSelectInput(display, window, KeyPressMask);
+}
+
 void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 {
 	XWindowAttributes window_attr;
@@ -325,6 +332,8 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 
 			break;
 		case BLUE_WM_CLIENT_ROLE_NONE:
+			handle_client_role_none__BlueWM(window, screen);
+
 			break;
 		default:
 			BLUE_LOG_UNREACHABLE("unknown role\n");
@@ -333,9 +342,10 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 
 void handle_key_press_event__BlueWM(const XEvent *event)
 {
-	if (event->xkey.state & Mod4Mask && event->xkey.keycode == 36) {
+	KeySym sym = XLookupKeysym((XKeyEvent*)&event->xkey, 0);
+
+	if (event->xkey.state & Mod4Mask && sym == XK_Return) {
 		launch_builtin_program__BlueWM("xterm", NULL);
-		printf("Mod + Enter\n");
 	}
 }
 
