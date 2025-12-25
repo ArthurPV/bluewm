@@ -1,6 +1,7 @@
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
+#include <X11/Xatom.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -37,16 +38,28 @@ struct BlueWMScreen {
 	struct BlueWMClient *splash;
 };
 
+enum BlueWMLayoutKind {
+	BLUE_WM_LAYOUT_KIND_TAB,
+	BLUE_WM_LAYOUT_KIND_HORIZONTAL_SPLIT,
+	BLUE_WM_LAYOUT_KIND_VERTICAL_SPLIT
+};
+
+struct BlueWMLayout {
+	enum BlueWMLayoutKind kind;
+};
+
 #define BLUE_WM_WORKSPACE_NUMBER 10
 
 struct BlueWMWorkspace {
 	struct BlueWMClient *clients;
+	struct BlueWMClient *active;
 };
 
 // https://specifications.freedesktop.org/wm/latest/ar01s05.html
 enum BlueWMAtom {
 	BLUE_WM_ATOM_DOCK,
 	BLUE_WM_ATOM_SPLASH,
+	BLUE_WM_ATOM_ACTIVE_WINDOW,
 
 	BLUE_WM_ATOM_MAX
 };
@@ -85,6 +98,9 @@ find_atom__BlueWM(const Atom *atom);
 static struct BlueWMScreen *
 find_screen__BlueWM(long screen_number);
 
+static struct BlueWMScreen *
+get_screen_from_window__BlueWM(Window window);
+
 static enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom);
 
@@ -103,6 +119,10 @@ static void handle_key_release_event__BlueWM(const XEvent *event);
 static void handle_button_press_event__BlueWM(const XEvent *event);
 
 static void handle_map_notify_event__BlueWM(const XEvent *event);
+
+static void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *screen, Window window);
+
+static void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window);
 
 static void handle_unmap_notify_event__BlueWM(const XEvent *event);
 
@@ -159,7 +179,8 @@ static void set_atoms__BlueWM(void)
 {
 	static const char *atom_names[BLUE_WM_ATOM_MAX] = {
 		"_NET_WM_WINDOW_TYPE_DOCK",
-		"_NET_WM_WINDOW_TYPE_SPLASH"
+		"_NET_WM_WINDOW_TYPE_SPLASH",
+		"_NET_ACTIVE_WINDOW"
 	};
 
 	for (enum BlueWMAtom atom = 0; atom < BLUE_WM_ATOM_MAX; ++atom) {
@@ -277,6 +298,20 @@ find_screen__BlueWM(long screen_number)
 	BLUE_LOG_UNREACHABLE("unable to find screen\n");
 }
 
+struct BlueWMScreen *
+get_screen_from_window__BlueWM(Window window)
+{
+	XWindowAttributes window_attr;
+
+	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
+		BLUE_LOG_ERROR("unable to get window attributes");
+	}
+
+	long screen_number = XScreenNumberOfScreen(window_attr.screen);
+
+	return find_screen__BlueWM(screen_number);
+}
+
 enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom)
 {
@@ -307,20 +342,25 @@ void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen)
 
 void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen)
 {
-	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
+	XSetInputFocus(display, window, RevertToParent, CurrentTime);
 	XSelectInput(display, window, KeyPressMask);
+
+	struct BlueWMClient *client = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_NONE, window);
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+
+	if (workspace->clients) {
+		workspace->clients->next = client;
+	} else {
+		workspace->clients = client;
+	}
+
+	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_ACTIVE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window, 1);
+	workspace->active = client;
 }
 
 void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 {
-	XWindowAttributes window_attr;
-
-	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get window attributes");
-	}
-
-	long screen_number = XScreenNumberOfScreen(window_attr.screen);
-	struct BlueWMScreen *screen = find_screen__BlueWM(screen_number);
+	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(window);
 
 	switch (role) {
 		case BLUE_WM_CLIENT_ROLE_SPLASH:
@@ -377,8 +417,54 @@ void handle_map_notify_event__BlueWM(const XEvent *event)
 	}
 }
 
-void handle_unmap_notify_event__BlueWM(const XEvent *event)
+void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *screen, Window window)
 {
+	for (size_t i = 0; i < BLUE_WM_WORKSPACE_NUMBER; ++i) {
+		struct BlueWMWorkspace *workspace = &workspaces[i];
+
+		if (workspace->active && workspace->active->window == window) {
+			Window new_window = None;
+
+			XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_ACTIVE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&new_window, 1);
+			workspace->active = NULL;
+
+			break;
+		}
+	}
+}
+
+void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window)
+{
+	const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+	struct BlueWMClient *current = workspace->clients;
+	struct BlueWMClient *previous = NULL;
+
+	while (current) {
+		if (current->window == window) {
+			if (previous) {
+				previous->next = current->next;
+			}
+
+			deinit_client__BlueWM(current);
+
+			break;
+		}
+
+		previous = current;
+		current = current->next;
+	}
+}
+
+void handle_unmap_notify_event__BlueWM(const XEvent *event)
+{	
+	Window event_window = event->xunmap.event;
+	Window unmapped_window = event->xunmap.window;
+	// NOTE: In this case, we cannot use unmapped_window as it's
+	// already get unmapped
+	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event_window);
+
+	update_active_window_from_workspaces__BlueWM(screen, unmapped_window);
+	remove_client__BlueWM(screen, unmapped_window);
 }
 
 void handle_events__BlueWM(void)

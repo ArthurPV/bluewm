@@ -2,6 +2,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/XKBlib.h>
+#include <X11/Xatom.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -24,6 +25,9 @@ unsigned int window_height = 0;
 GC window_gc = {0};
 XFontStruct *font = NULL;
 Pixmap window_pixels = {0};
+char *current_window_title = NULL;
+size_t current_window_title_len = 0;
+Atom active_window_atom = {0};
 
 static void draw_bg__BlueWMBar(void);
 
@@ -33,9 +37,13 @@ static void draw_keyboard_layout__BlueWMBar(void);
 
 static void draw_date__BlueWMBar(void);
 
+static void draw_window_title__BlueWMBar(void);
+
 static void draw__BlueWMBar(void);
 
 static void set_font__BlueWMBar(void);
+
+static void handle_active_window_notify__BlueWMBar(const XEvent *event);
 
 static void handle_events__BlueWMBar(void);
 
@@ -73,11 +81,21 @@ void draw_date__BlueWMBar(void)
 	XDrawString(display, window_pixels, window_gc, 3, WINDOW_MIDDLE(font), date, strlen(date));
 }
 
+void draw_window_title__BlueWMBar(void)
+{
+	if (!current_window_title) {
+		return;
+	}
+
+	XDrawString(display, window_pixels, window_gc, (window_width / 2) - current_window_title_len, WINDOW_MIDDLE(font), current_window_title, current_window_title_len);
+}
+
 void draw__BlueWMBar(void)
 {	
 	draw_bg__BlueWMBar();
 	draw_keyboard_layout__BlueWMBar();
 	draw_date__BlueWMBar();
+	draw_window_title__BlueWMBar();
 	XCopyArea(display, window_pixels, window, window_gc, 0, 0, window_width, window_height, 0, 0);
 	XFlush(display);
 }
@@ -89,6 +107,38 @@ void set_font__BlueWMBar(void)
 	}
 
 	XSetFont(display, window_gc, font->fid);
+}
+
+void handle_active_window_notify__BlueWMBar(const XEvent *event)
+{
+	Atom actual_type;
+	int actual_format;
+	unsigned long nitems_return;
+	unsigned long bytes_after_return;
+	unsigned char *prop_return;
+	int status = XGetWindowProperty(display, event->xproperty.window, active_window_atom, 0, 1, false, XA_WINDOW, &actual_type, &actual_format, &nitems_return, &bytes_after_return, &prop_return);
+
+	if (status == Success && actual_type == XA_WINDOW && actual_format == 32 && nitems_return == 1 && prop_return) {
+		if (current_window_title) {
+			XFree(current_window_title);
+			current_window_title = NULL;
+			current_window_title_len = 0;
+		}
+
+		Window active_window = *(Window *)prop_return;
+
+		if (active_window != None) {
+			XFetchName(display, active_window, &current_window_title);
+
+			if (current_window_title) {
+				current_window_title_len = strlen(current_window_title);
+			}
+		}
+	}
+
+	if (prop_return) {
+		XFree(prop_return);
+	}
 }
 
 void handle_events__BlueWMBar(void)
@@ -103,6 +153,12 @@ void handle_events__BlueWMBar(void)
 			switch (event.type) {
 				case Expose:
 					draw__BlueWMBar();
+
+					break;
+				case PropertyNotify:
+					if (event.xproperty.atom == active_window_atom) {
+						handle_active_window_notify__BlueWMBar(&event);
+					}
 
 					break;
 				default:
@@ -161,8 +217,11 @@ int main() {
 		BLUE_LOG_ERROR("cannot set WM_PROTOCOLS\n");
 	}
 
+	active_window_atom = XInternAtom(display, "_NET_ACTIVE_WINDOW", false);
+
 	set_font__BlueWMBar();
-	XSelectInput(display, window, ExposureMask);
+	XSelectInput(display, window, ExposureMask | FocusChangeMask);
+	XSelectInput(display, window_root, PropertyChangeMask);
 	XMapWindow(display, window);
 	handle_events__BlueWMBar();
 	close__BlueWMBar();
