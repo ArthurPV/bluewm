@@ -13,6 +13,14 @@
 #include <bluewm.h>
 #include <config/bluewm.h>
 
+#define BLUE_WM_POINTER_STATE_MOTION 1 << 0
+#define BLUE_WM_POINTER_STATE_PRESSED 1 << 1
+
+struct BlueWMPointer {
+	int state_mask;
+	int x, y;
+};
+
 #define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
 #define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
 
@@ -116,7 +124,11 @@ static void handle_key_press_event__BlueWM(const XEvent *event);
 
 static void handle_key_release_event__BlueWM(const XEvent *event);
 
+static void handle_button_release_event__BlueWM(const XEvent *event);
+
 static void handle_button_press_event__BlueWM(const XEvent *event);
+
+static void handle_motion_notify_event__BlueWM(const XEvent *event);
 
 static void handle_map_notify_event__BlueWM(const XEvent *event);
 
@@ -126,14 +138,24 @@ static void remove_client__BlueWM(const struct BlueWMScreen *screen, Window wind
 
 static void handle_unmap_notify_event__BlueWM(const XEvent *event);
 
+static bool window_is_on_dock__BlueWM(const struct BlueWMScreen *screen, const XWindowAttributes *window_attr, int *new_x, int *new_y);
+
+static void handle_map_request_event__BlueWM(const XEvent *event);
+
+static void handle_configure_request_event__BlueWM(const XEvent *event);
+
 static void handle_events__BlueWM(void);
 
 static void (*const handle_event_functions[])(const XEvent *) = {
 	[KeyPress] = &handle_key_press_event__BlueWM,
 	[KeyRelease] = &handle_key_release_event__BlueWM,
 	[ButtonPress] = &handle_button_press_event__BlueWM,
+	[ButtonRelease] = &handle_button_release_event__BlueWM,
+	[MotionNotify] = &handle_motion_notify_event__BlueWM,
 	[MapNotify] = &handle_map_notify_event__BlueWM, 
-	[UnmapNotify] = &handle_unmap_notify_event__BlueWM
+	[UnmapNotify] = &handle_unmap_notify_event__BlueWM,
+	[MapRequest] = &handle_map_request_event__BlueWM,
+	[ConfigureRequest] = &handle_configure_request_event__BlueWM
 };
 static Atom atoms[BLUE_WM_ATOM_MAX] = {0};
 static struct BlueWMWorkspace workspaces[BLUE_WM_WORKSPACE_NUMBER] = {0};
@@ -141,6 +163,7 @@ static Cursor cursor = {0};
 static Display *display = NULL;
 static struct BlueWMScreen *screens = NULL;
 static bool is_running = true;
+struct BlueWMPointer pointer = {0};
 
 void
 launch_builtin_program__BlueWM(const char *cmd, ...)
@@ -221,9 +244,15 @@ set_screens__BlueWM(void)
 		// In case we have more screen than workspace
 		bscreen->workspace = screen_number % BLUE_WM_WORKSPACE_NUMBER;
 
-		XSelectInput(display, XRootWindow(display, screen_number),
+		Window window_root = XRootWindow(display, screen_number);
+
+		XSelectInput(display, window_root,
 				KeyPressMask | KeyReleaseMask | ButtonPressMask |
-				SubstructureNotifyMask);
+				ButtonReleaseMask | PointerMotionMask |
+				SubstructureNotifyMask | SubstructureRedirectMask);
+		XGrabButton(display, AnyButton, Mod4Mask, window_root, true,
+				ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+				GrabModeAsync, GrabModeAsync, None, None);
 
 		screens = bscreen;
 	}
@@ -343,7 +372,6 @@ void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen)
 void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen)
 {
 	XSetInputFocus(display, window, RevertToParent, CurrentTime);
-	XSelectInput(display, window, KeyPressMask);
 
 	struct BlueWMClient *client = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_NONE, window);
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
@@ -393,8 +421,23 @@ void handle_key_release_event__BlueWM(const XEvent *event)
 {
 }
 
+void handle_button_release_event__BlueWM(const XEvent *event)
+{
+	pointer.state_mask &= ~BLUE_WM_POINTER_STATE_PRESSED;
+}
+
 void handle_button_press_event__BlueWM(const XEvent *event)
 {
+	pointer.state_mask |= BLUE_WM_POINTER_STATE_PRESSED;
+}
+
+void handle_motion_notify_event__BlueWM(const XEvent *event)
+{
+	if (pointer.state_mask & BLUE_WM_POINTER_STATE_PRESSED) {
+		XMoveWindow(display, event->xmotion.window, 100, 100);
+		pointer.x = event->xmotion.x_root;
+		pointer.y = event->xmotion.y_root;
+	}
 }
 
 void handle_map_notify_event__BlueWM(const XEvent *event)
@@ -469,6 +512,92 @@ void handle_unmap_notify_event__BlueWM(const XEvent *event)
 	remove_client__BlueWM(screen, unmapped_window);
 }
 
+bool window_is_on_dock__BlueWM(const struct BlueWMScreen *screen, const XWindowAttributes *window_attr, int *new_x, int *new_y)
+{
+	*new_x = window_attr->x;
+	*new_y = window_attr->y;
+
+	if (!screen->dock) {
+		return false;
+	}
+
+	XWindowAttributes dock_attr;
+
+	if (XGetWindowAttributes(display, screen->dock->window, &dock_attr) == 0) {
+		BLUE_LOG_ERROR("unable to get dock attributes\n");
+	}
+
+	int window_y = window_attr->y;
+	int window_y2 = window_attr->y + window_attr->height;
+	int dock_y = dock_attr.y;
+	int dock_y2 = dock_attr.y + dock_attr.height;
+
+	if (dock_y2 > window_y) {
+		*new_y += dock_y2 - window_y;
+
+		return true;
+	} else if (window_y2 > dock_y) {
+		*new_y -= window_y2 - dock_y;
+
+		return true;
+	}
+
+	int window_x = window_attr->x;
+	int window_x2 = window_attr->x + window_attr->width;
+	int dock_x = dock_attr.x;
+	int dock_x2 = dock_attr.x + dock_attr.width;
+
+	if (dock_x2 > window_x) {
+		*new_x += dock_x2 - window_x;
+
+		return true;
+	} else if (window_x2 > dock_x) {
+		*new_x -= window_x2 - dock_x;
+	}
+
+	return false;
+}
+
+void handle_map_request_event__BlueWM(const XEvent *event)
+{
+	Window window = event->xmaprequest.window;
+	XWindowAttributes window_attr;
+
+	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
+		BLUE_LOG_ERROR("unable to get window attributes\n");
+	}
+
+	struct BlueWMScreen *screen = find_screen__BlueWM(XScreenNumberOfScreen(window_attr.screen));
+	int new_x = 0;
+	int new_y = 0;
+
+	if (window_is_on_dock__BlueWM(screen, &window_attr, &new_x, &new_y)) {
+		XMoveWindow(display, window, new_x, new_y);
+	}
+
+	XMapWindow(display, window);
+}
+
+void handle_configure_request_event__BlueWM(const XEvent *event)
+{
+	XWindowChanges window_changes = {0};
+
+    window_changes.x = event->xconfigurerequest.x;
+    window_changes.y = event->xconfigurerequest.y;
+    window_changes.width = event->xconfigurerequest.width;
+    window_changes.height = event->xconfigurerequest.height;
+    window_changes.border_width = event->xconfigurerequest.border_width;
+    window_changes.sibling = event->xconfigurerequest.above;
+    window_changes.stack_mode = event->xconfigurerequest.detail;
+
+	XConfigureWindow(
+        display,
+        event->xconfigurerequest.window,
+        event->xconfigurerequest.value_mask,
+        &window_changes
+    );
+}
+
 void handle_events__BlueWM(void)
 {
 	XEvent event;
@@ -480,8 +609,12 @@ void handle_events__BlueWM(void)
 			case KeyPress:
 			case KeyRelease:
 			case ButtonPress:
+			case ButtonRelease:
+			case MotionNotify:
 			case MapNotify:
 			case UnmapNotify:
+			case MapRequest:
+			case ConfigureRequest:
 				handle_event_functions[event.type](&event);
 
 				break;
