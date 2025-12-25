@@ -435,7 +435,7 @@ void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *scr
 
 void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window)
 {
-	const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 	struct BlueWMClient *current = workspace->clients;
 	struct BlueWMClient *previous = NULL;
 
@@ -443,6 +443,8 @@ void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window)
 		if (current->window == window) {
 			if (previous) {
 				previous->next = current->next;
+			} else {
+				workspace->clients = current->next;
 			}
 
 			deinit_client__BlueWM(current);
