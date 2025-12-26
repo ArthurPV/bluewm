@@ -25,9 +25,11 @@ unsigned int window_height = 0;
 GC window_gc = {0};
 XFontStruct *font = NULL;
 Pixmap window_pixels = {0};
+Window current_window = None;
 char *current_window_title = NULL;
 size_t current_window_title_len = 0;
 Atom active_window_atom = {0};
+Atom wm_name_atom = {0};
 
 static void draw_bg__BlueWMBar(void);
 
@@ -44,6 +46,10 @@ static void draw__BlueWMBar(void);
 static void set_font__BlueWMBar(void);
 
 static void handle_active_window_notify__BlueWMBar(const XEvent *event);
+
+static void fetch_window_title__BlueWMBar(void);
+
+static inline void handle_wm_name_notify__BlueWMBar(void);
 
 static void handle_events__BlueWMBar(void);
 
@@ -119,26 +125,47 @@ void handle_active_window_notify__BlueWMBar(const XEvent *event)
 	int status = XGetWindowProperty(display, event->xproperty.window, active_window_atom, 0, 1, false, XA_WINDOW, &actual_type, &actual_format, &nitems_return, &bytes_after_return, &prop_return);
 
 	if (status == Success && actual_type == XA_WINDOW && actual_format == 32 && nitems_return == 1 && prop_return) {
-		if (current_window_title) {
-			XFree(current_window_title);
-			current_window_title = NULL;
-			current_window_title_len = 0;
+		if (current_window != None) {
+			// Stop to receive event from this window
+			XSelectInput(display, current_window, 0);
 		}
 
-		Window active_window = *(Window *)prop_return;
+		current_window = *(Window *)prop_return;
 
-		if (active_window != None) {
-			XFetchName(display, active_window, &current_window_title);
-
-			if (current_window_title) {
-				current_window_title_len = strlen(current_window_title);
-			}
+		if (current_window != None) {
+			XSelectInput(display, current_window, PropertyChangeMask | StructureNotifyMask);
 		}
+
+		fetch_window_title__BlueWMBar();
 	}
 
 	if (prop_return) {
 		XFree(prop_return);
 	}
+}
+
+void fetch_window_title__BlueWMBar(void)
+{
+	if (current_window_title) {
+		XFree(current_window_title);
+		current_window_title = NULL;
+		current_window_title_len = 0;
+	}
+
+	if (current_window == None) {
+		return;
+	}
+
+	XFetchName(display, current_window, &current_window_title);
+
+	if (current_window_title) {
+		current_window_title_len = strlen(current_window_title);
+	}
+}
+
+void handle_wm_name_notify__BlueWMBar(void)
+{
+	fetch_window_title__BlueWMBar();
 }
 
 void handle_events__BlueWMBar(void)
@@ -158,6 +185,14 @@ void handle_events__BlueWMBar(void)
 				case PropertyNotify:
 					if (event.xproperty.atom == active_window_atom) {
 						handle_active_window_notify__BlueWMBar(&event);
+					} else if (event.xproperty.atom == wm_name_atom) {
+						handle_wm_name_notify__BlueWMBar();
+					}
+
+					break;
+				case UnmapNotify:
+					if (event.xunmap.window == current_window) {
+						current_window = None;
 					}
 
 					break;
@@ -218,6 +253,7 @@ int main() {
 	}
 
 	active_window_atom = XInternAtom(display, "_NET_ACTIVE_WINDOW", false);
+	wm_name_atom = XInternAtom(display, "_NET_WM_NAME", false);
 
 	set_font__BlueWMBar();
 	XSelectInput(display, window, ExposureMask | FocusChangeMask);
