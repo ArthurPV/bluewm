@@ -13,14 +13,6 @@
 #include <bluewm.h>
 #include <config/bluewm.h>
 
-#define BLUE_WM_POINTER_STATE_MOTION 1 << 0
-#define BLUE_WM_POINTER_STATE_PRESSED 1 << 1
-
-struct BlueWMPointer {
-	int state_mask;
-	int x, y;
-};
-
 #define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
 #define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
 
@@ -109,6 +101,9 @@ find_screen__BlueWM(long screen_number);
 static struct BlueWMScreen *
 get_screen_from_window__BlueWM(Window window);
 
+static struct BlueWMScreen *
+find_screen_from_root_window__BlueWM(Window root);
+
 static enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom);
 
@@ -163,7 +158,7 @@ static Cursor cursor = {0};
 static Display *display = NULL;
 static struct BlueWMScreen *screens = NULL;
 static bool is_running = true;
-struct BlueWMPointer pointer = {0};
+int state_mask = 0;
 
 void
 launch_builtin_program__BlueWM(const char *cmd, ...)
@@ -250,9 +245,6 @@ set_screens__BlueWM(void)
 				KeyPressMask | KeyReleaseMask | ButtonPressMask |
 				ButtonReleaseMask | PointerMotionMask |
 				SubstructureNotifyMask | SubstructureRedirectMask);
-		XGrabButton(display, AnyButton, Mod4Mask, window_root, true,
-				ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-				GrabModeAsync, GrabModeAsync, None, None);
 
 		screens = bscreen;
 	}
@@ -341,6 +333,22 @@ get_screen_from_window__BlueWM(Window window)
 	return find_screen__BlueWM(screen_number);
 }
 
+struct BlueWMScreen *
+find_screen_from_root_window__BlueWM(Window root)
+{
+	struct BlueWMScreen *current = screens;
+
+	while (current) {
+		if (XRootWindow(display, current->screen_number) == root) {
+			return current;
+		}
+
+		current = current->next;
+	}
+
+	BLUE_LOG_UNREACHABLE("unable to find screen\n");
+}
+
 enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom)
 {
@@ -371,7 +379,7 @@ void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen)
 
 void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen)
 {
-	XSetInputFocus(display, window, RevertToParent, CurrentTime);
+	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
 
 	struct BlueWMClient *client = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_NONE, window);
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
@@ -410,6 +418,8 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 
 void handle_key_press_event__BlueWM(const XEvent *event)
 {
+	state_mask |= event->xkey.state;
+
 	KeySym sym = XLookupKeysym((XKeyEvent*)&event->xkey, 0);
 
 	if (event->xkey.state & Mod4Mask && sym == XK_Return) {
@@ -419,24 +429,33 @@ void handle_key_press_event__BlueWM(const XEvent *event)
 
 void handle_key_release_event__BlueWM(const XEvent *event)
 {
+	state_mask &= ~event->xkey.state;
 }
 
 void handle_button_release_event__BlueWM(const XEvent *event)
 {
-	pointer.state_mask &= ~BLUE_WM_POINTER_STATE_PRESSED;
+	state_mask &= ~event->xbutton.state;
 }
 
 void handle_button_press_event__BlueWM(const XEvent *event)
 {
-	pointer.state_mask |= BLUE_WM_POINTER_STATE_PRESSED;
+	state_mask |= event->xbutton.state;
 }
 
 void handle_motion_notify_event__BlueWM(const XEvent *event)
 {
-	if (pointer.state_mask & BLUE_WM_POINTER_STATE_PRESSED) {
-		XMoveWindow(display, event->xmotion.window, 100, 100);
-		pointer.x = event->xmotion.x_root;
-		pointer.y = event->xmotion.y_root;
+	if (state_mask & (Button1Mask | Mod4Mask)) {
+		XMoveWindow(display, event->xmotion.window, event->xmotion.x_root, event->xmotion.y_root);
+	} else {
+		Window window_root = event->xmotion.root;
+		struct BlueWMScreen *screen = find_screen_from_root_window__BlueWM(window_root);
+		const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+		Window new_focused_window = event->xmotion.window;
+
+		if (!workspace->active || workspace->active->window != new_focused_window) {
+			update_active_window_from_workspaces__BlueWM(screen, new_focused_window);
+			XSetInputFocus(display, new_focused_window, RevertToPointerRoot, CurrentTime);
+		}
 	}
 }
 
