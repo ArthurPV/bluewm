@@ -17,19 +17,19 @@
 #define WINDOW_HEIGHT 20
 #define WINDOW_MIDDLE(font) ((WINDOW_HEIGHT / 2) + ((font)->ascent - ((font)->ascent + (font)->descent) / 2))
 
-Display *display = NULL;
-Window window = {0};
-unsigned int window_bg_color = BLUE_RGB(66, 85, 148);
-unsigned int window_width = 0;
-unsigned int window_height = 0;
-GC window_gc = {0};
-XFontStruct *font = NULL;
-Pixmap window_pixels = {0};
-Window current_window = None;
-char *current_window_title = NULL;
-size_t current_window_title_len = 0;
-Atom active_window_atom = {0};
-Atom wm_name_atom = {0};
+static Display *display = NULL;
+static Window window = {0};
+static unsigned int window_bg_color = BLUE_RGB(66, 85, 148);
+static unsigned int window_width = 0;
+static unsigned int window_height = 0;
+static GC window_gc = {0};
+static XFontStruct *font = NULL;
+static Pixmap window_pixels = {0};
+static Window current_window = None;
+static char *current_window_title = NULL;
+static size_t current_window_title_len = 0;
+static Atom active_window_atom = {0};
+static Atom wm_name_atom = {0};
 
 static void draw_bg__BlueWMBar(void);
 

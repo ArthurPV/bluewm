@@ -12,11 +12,11 @@
 
 #include <bluewm.h>
 
-Display *display = NULL;
-Window window = 0;
-GC window_gc = {0};
-unsigned int window_width = 0;
-unsigned int window_height = 0;
+static Display *display = NULL;
+static Window window = 0;
+static GC window_gc = {0};
+static unsigned int window_width = 0;
+static unsigned int window_height = 0;
 static XImage *ximage = NULL;
 static const char *path = NULL;
 

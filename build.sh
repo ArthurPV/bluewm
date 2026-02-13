@@ -8,3 +8,4 @@ gcc bluewm.c -o bluewm $FLAGS
 gcc bluewmbar.c -o bluewmbar $FLAGS
 gcc bluewmbg.c -o bluewmbg -lspng -ljpeg $FLAGS
 gcc bluewmlauncher.c -o bluewmlauncher $FLAGS
+gcc bluewmclock.c -o clock $FLAGS
