@@ -13,31 +13,21 @@
 
 #include <bluewm.h>
 
-#define NB_HOURS 12
-#define CIRCLE_TOTAL_ANGLE 360
+#define NB_HOURS (12)
+#define NB_MINUTES (60)
+#define CIRCLE_TOTAL_ANGLE (360)
+#define START_ANGLE (90)
+
+// https://en.wikipedia.org/wiki/Radian
+#define ANGLE_TO_RADIAN(angle) (angle * (M_PI / 180))
+#define RADIUS (window_height / 2)
+#define ANGLE_BY_HOUR (CIRCLE_TOTAL_ANGLE / NB_HOURS)
 
 static Display *display = NULL;
 static Window window = 0;
 static GC window_gc = {0};
 static const unsigned int window_width = 500;
 static const unsigned int window_height = 500;
-static int angles_by_hour[NB_HOURS + 1] = {
-	[1] = 60,
-	[2] = 30,
-	[3] = 0,
-	[4] = 330,
-	[5] = 300,
-	[6] = 270,
-	[7] = 240,
-	[8] = 210,
-	[9] = 180,
-	[10] = 150,
-	[11] = 120,
-	[12] = 90
-};
-
-// https://en.wikipedia.org/wiki/Radian
-#define ANGLE_TO_RADIAN(angle) (angle * (M_PI / 180))
 
 static void draw_circle__BlueWMClock(void);
 
@@ -85,11 +75,11 @@ void calculate_position_according_angle__BlueWMClock(int radius, int angle, int 
 
 void draw_hour_lines__BlueWMClock(void)
 {
-	int radius = window_height / 2;
+	int radius = RADIUS;
 	int line_length = 30;
 
 	for (int hour = 1; hour <= NB_HOURS; ++hour) {
-		int current_angle = angles_by_hour[hour];
+		int current_angle = ANGLE_BY_HOUR * hour - START_ANGLE;
 		int x, y;
 
 		calculate_position_according_angle__BlueWMClock(radius, current_angle, &x, &y);
@@ -114,39 +104,35 @@ void draw_hands__BlueWMClock(void)
 
 void draw_hour_hand__BlueWMClock(int hour, int minute)
 {
-#define MINUTE_BY_HOUR 60
 	int hour_12_format = hour % NB_HOURS;
-	int current_angle = angles_by_hour[hour_12_format];
-	int radius = window_height / 2;
+	int radius = RADIUS;
 	int hand_length = 120;
-	const float angle_by_hour = CIRCLE_TOTAL_ANGLE / NB_HOURS;
-	float angle_by_minute = angle_by_hour / MINUTE_BY_HOUR;
+	const float angle_by_hour = ANGLE_BY_HOUR;
+	int current_angle = (angle_by_hour * hour_12_format) - START_ANGLE;
+	float angle_by_minute = angle_by_hour / NB_MINUTES;
 
 	current_angle += angle_by_minute * minute;
 
 	draw_line_with_angle__BlueWMClock(radius, radius, hand_length, current_angle);
-#undef MINUTE_BY_HOUR
 }
 
 void draw_minute_hand__BlueWMClock(int minute)
 {
-#define NB_MINUTES 60
-	int radius = window_height / 2;
+	int radius = RADIUS;
 	int hand_length = 200;
 	const int angle_by_minute = CIRCLE_TOTAL_ANGLE / NB_MINUTES;
-	int current_angle = (angle_by_minute * minute) - 90;
+	int current_angle = (angle_by_minute * minute) - START_ANGLE;
 
 	draw_line_with_angle__BlueWMClock(radius, radius, hand_length, current_angle);
-#undef NB_MINUTES
 }
 
 void draw_second_hand__BlueWMClock(int second)
 {
 #define NB_SECONDS 60
-	int radius = window_height / 2;
+	int radius = RADIUS;
 	int hand_length = 200;
 	const int angle_by_second = CIRCLE_TOTAL_ANGLE / NB_SECONDS;
-	int current_angle = (angle_by_second * second) - 90;
+	int current_angle = (angle_by_second * second) - START_ANGLE;
 
 	XSetForeground(display, window_gc, BLUE_RGB(240, 57, 57));
 
