@@ -11,7 +11,6 @@
 #include <assert.h>
 
 #include <bluewm.h>
-#include <config/bluewm.h>
 
 #define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
 #define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
@@ -115,6 +114,8 @@ static void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *
 
 static void new_client__BlueWM(Window window, enum BlueWMClientRole role);
 
+static void launch_terminal__BlueWM(void);
+
 static void handle_key_press_event__BlueWM(const XEvent *event);
 
 static void handle_key_release_event__BlueWM(const XEvent *event);
@@ -140,6 +141,8 @@ static void handle_map_request_event__BlueWM(const XEvent *event);
 static void handle_configure_request_event__BlueWM(const XEvent *event);
 
 static void handle_events__BlueWM(void);
+
+#include <config/bluewm.h>
 
 static void (*const handle_event_functions[])(const XEvent *) = {
 	[KeyPress] = &handle_key_press_event__BlueWM,
@@ -288,7 +291,7 @@ launch_startup_program__BlueWM(void)
 	launch_builtin_program__BlueWM("./bluewmbar", NULL);
 
 	// Launch our background
-	launch_builtin_program__BlueWM("./bluewmbg", BLUE_CONFIG_BG_PATH, NULL);
+	launch_builtin_program__BlueWM("./bluewmbg", BLUE_WM_CONFIG_BG_PATH, NULL);
 }
 
 int
@@ -416,14 +419,25 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 	}
 }
 
+void launch_terminal__BlueWM(void)
+{
+	launch_builtin_program__BlueWM("xterm", NULL);
+}
+
 void handle_key_press_event__BlueWM(const XEvent *event)
 {
 	state_mask |= event->xkey.state;
 
 	KeySym sym = XLookupKeysym((XKeyEvent*)&event->xkey, 0);
 
-	if (event->xkey.state & Mod4Mask && sym == XK_Return) {
-		launch_builtin_program__BlueWM("xterm", NULL);
+	for (size_t i = 0; i < shortcuts_len; ++i) {
+		struct BlueWMShortcut *shortcut = &shortcuts[i];
+
+		if (state_mask == shortcut->state && shortcut->sym == sym) {
+			assert(shortcut->handler && "Expected to have an handler");
+
+			shortcut->handler();
+		}
 	}
 }
 

@@ -1,6 +1,23 @@
 #ifndef BLUEWM_CONFIG_H
 #define BLUEWM_CONFIG_H
 
-#define BLUE_CONFIG_BG_PATH "./bg.jpg"
+struct BlueWMShortcut {
+	unsigned int state;
+	KeySym sym;
+	void (*handler)(void);
+};
+
+#undef BLUE_WM_SHORTCUT
+
+#define BLUE_WM_SHORTCUT(_state, _sym, _handler) ((struct BlueWMShortcut){ .state = _state, .sym = _sym, .handler = _handler })
+
+static struct BlueWMShortcut shortcuts[] = {
+	BLUE_WM_SHORTCUT(Mod4Mask, XK_Return, &launch_terminal__BlueWM)
+};
+static size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
+
+#undef BLUE_WM_CONFIG_BG_PATH
+
+#define BLUE_WM_CONFIG_BG_PATH "./bg.jpg"
 
 #endif // BLUEWM_CONFIG_H
