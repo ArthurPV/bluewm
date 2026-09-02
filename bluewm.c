@@ -462,7 +462,6 @@ void toggle_resize_window__BlueWM(void)
 \
 	XResizeWindow(display, window_to_resize, window_attr.width width_change, window_attr.height height_change);
 
-
 void resize_window_left__BlueWM(void)
 {
 	RESIZE_WINDOW_MOTION(+10, +0);
