@@ -126,13 +126,17 @@ static void resize_window_up__BlueWM(struct BlueWMScreen *screen);
 
 static void resize_window_down__BlueWM(struct BlueWMScreen *screen);
 
+static void update_key_state_mask__BlueWM(const XEvent *event);
+
 static void handle_key_press_event__BlueWM(const XEvent *event);
 
 static void handle_key_release_event__BlueWM(const XEvent *event);
 
-static void handle_button_release_event__BlueWM(const XEvent *event);
+static void update_button_state_mask__BlueWM(const XEvent *event);
 
 static void handle_button_press_event__BlueWM(const XEvent *event);
+
+static void handle_button_release_event__BlueWM(const XEvent *event);
 
 static void handle_motion_notify_event__BlueWM(const XEvent *event);
 
@@ -172,7 +176,8 @@ static Display *display = NULL;
 static struct BlueWMScreen *screens = NULL;
 static bool is_running = true;
 static Window window_to_resize = None;
-int state_mask = 0;
+static int key_state_mask = 0;
+static int button_state_mask = 0;
 
 void
 launch_builtin_program__BlueWM(const char *cmd, ...)
@@ -442,11 +447,23 @@ void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
 	if (!workspace->active) {
 		return;
 	} else if (window_to_resize != None) {
+		XWindowAttributes attr;
+
+		if (XGetWindowAttributes(display, window_to_resize, &attr) == 0) {
+			BLUE_LOG_ERROR("unable to get window attributes");
+		}
+
+		if (attr.map_state == IsUnmapped) {
+			goto out;
+		}
+
 		window_to_resize = None;
 
 		return;
 	}
 
+out:
+	printf("Resize\n");
 	window_to_resize = workspace->active->window;
 }
 
@@ -485,16 +502,25 @@ void resize_window_down__BlueWM(struct BlueWMScreen *screen)
 
 #undef RESIZE_WINDOW_MOTION
 
+static void update_key_state_mask__BlueWM(const XEvent *event)
+{
+	unsigned int mod4 = event->xkey.state & Mod4Mask ? Mod4Mask : None;
+	unsigned int shift = event->xkey.state & ShiftMask ? ShiftMask : None;
+	unsigned int control = event->xkey.state & ControlMask ? ControlMask : None;
+
+	key_state_mask = mod4 | shift | control;
+}
+
 void handle_key_press_event__BlueWM(const XEvent *event)
 {
-	state_mask |= event->xkey.state;
-
 	KeySym sym = XLookupKeysym((XKeyEvent*)&event->xkey, 0);
+
+	update_key_state_mask__BlueWM(event);
 
 	for (size_t i = 0; i < shortcuts_len; ++i) {
 		struct BlueWMShortcut *shortcut = &shortcuts[i];
 
-		if (state_mask == shortcut->state && shortcut->sym == sym) {
+		if (key_state_mask == shortcut->state && shortcut->sym == sym) {
 			assert(shortcut->handler && "Expected to have an handler");
 
 			struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xkey.window);
@@ -506,22 +532,30 @@ void handle_key_press_event__BlueWM(const XEvent *event)
 
 void handle_key_release_event__BlueWM(const XEvent *event)
 {
-	state_mask &= ~event->xkey.state;
+	update_key_state_mask__BlueWM(event);
 }
 
-void handle_button_release_event__BlueWM(const XEvent *event)
+void update_button_state_mask__BlueWM(const XEvent *event)
 {
-	state_mask &= ~event->xbutton.state;
+	unsigned int button1 = event->xbutton.state & Button1Mask ? Button1Mask : None;
+	unsigned int button2 = event->xbutton.state & Button2Mask ? Button1Mask : None;
+
+	button_state_mask = button1 | button2;
 }
 
 void handle_button_press_event__BlueWM(const XEvent *event)
 {
-	state_mask |= event->xbutton.state;
+	update_button_state_mask__BlueWM(event);
+}
+
+void handle_button_release_event__BlueWM(const XEvent *event)
+{
+	update_button_state_mask__BlueWM(event);
 }
 
 void handle_motion_notify_event__BlueWM(const XEvent *event)
 {
-	if (state_mask & (Button1Mask | Mod4Mask)) {
+	if (key_state_mask & Mod4Mask && button_state_mask & Button1Mask) {
 		XMoveWindow(display, event->xmotion.window, event->xmotion.x_root, event->xmotion.y_root);
 	} else {
 		Window window_root = event->xmotion.root;
