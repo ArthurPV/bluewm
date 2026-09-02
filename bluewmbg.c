@@ -177,7 +177,6 @@ void read_and_put_image__BlueWMBg(void)
 
 void draw__BlueWMBg(void)
 {
-	XClearWindow(display, window);
 	read_and_put_image__BlueWMBg();
 }
 
