@@ -116,6 +116,16 @@ static void new_client__BlueWM(Window window, enum BlueWMClientRole role);
 
 static void launch_terminal__BlueWM(void);
 
+static void toggle_resize_window__BlueWM(void);
+
+static void resize_window_left__BlueWM(void);
+
+static void resize_window_right__BlueWM(void);
+
+static void resize_window_up__BlueWM(void);
+
+static void resize_window_down__BlueWM(void);
+
 static void handle_key_press_event__BlueWM(const XEvent *event);
 
 static void handle_key_release_event__BlueWM(const XEvent *event);
@@ -157,10 +167,12 @@ static void (*const handle_event_functions[])(const XEvent *) = {
 };
 static Atom atoms[BLUE_WM_ATOM_MAX] = {0};
 static struct BlueWMWorkspace workspaces[BLUE_WM_WORKSPACE_NUMBER] = {0};
+static struct BlueWMWorkspace *current_workspace = &workspaces[0];
 static Cursor cursor = {0};
 static Display *display = NULL;
 static struct BlueWMScreen *screens = NULL;
 static bool is_running = true;
+static Window window_to_resize = None;
 int state_mask = 0;
 
 void
@@ -424,6 +436,55 @@ void launch_terminal__BlueWM(void)
 	launch_builtin_program__BlueWM("xterm", NULL);
 }
 
+void toggle_resize_window__BlueWM(void)
+{
+	if (!current_workspace->active) {
+		return;
+	} else if (window_to_resize != None) {
+		window_to_resize = None;
+
+		return;
+	}
+
+	window_to_resize = current_workspace->active->window;
+}
+
+#define RESIZE_WINDOW_MOTION(width_change, height_change) \
+	if (window_to_resize == None) { \
+		return; \
+	} \
+\
+	XWindowAttributes window_attr; \
+\
+	if (XGetWindowAttributes(display, window_to_resize, &window_attr) == 0) { \
+		BLUE_LOG_ERROR("unable to get window attributes"); \
+	} \
+\
+	XResizeWindow(display, window_to_resize, window_attr.width width_change, window_attr.height height_change);
+
+
+void resize_window_left__BlueWM(void)
+{
+	RESIZE_WINDOW_MOTION(+10, +0);
+}
+
+void resize_window_right__BlueWM(void)
+{
+	RESIZE_WINDOW_MOTION(-10, +0);
+}
+
+void resize_window_up__BlueWM(void)
+{
+	RESIZE_WINDOW_MOTION(+0, +10);
+}
+
+void resize_window_down__BlueWM(void)
+{
+	RESIZE_WINDOW_MOTION(+0, -10);
+}
+
+#undef RESIZE_WINDOW_MOTION
+
 void handle_key_press_event__BlueWM(const XEvent *event)
 {
 	state_mask |= event->xkey.state;
@@ -608,6 +669,7 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 		XMoveWindow(display, window, new_x, new_y);
 	}
 
+	XSelectInput(display, window, KeyPressMask | KeyReleaseMask);
 	XMapWindow(display, window);
 }
 
