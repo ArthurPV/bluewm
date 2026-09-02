@@ -4,7 +4,7 @@
 struct BlueWMShortcut {
 	unsigned int state;
 	KeySym sym;
-	void (*handler)(void);
+	void (*handler)(struct BlueWMScreen*);
 };
 
 #undef BLUE_WM_SHORTCUT

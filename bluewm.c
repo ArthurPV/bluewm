@@ -114,17 +114,17 @@ static void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *
 
 static void new_client__BlueWM(Window window, enum BlueWMClientRole role);
 
-static void launch_terminal__BlueWM(void);
+static void launch_terminal__BlueWM(struct BlueWMScreen *screen);
 
-static void toggle_resize_window__BlueWM(void);
+static void toggle_resize_window__BlueWM(struct BlueWMScreen *screen);
 
-static void resize_window_left__BlueWM(void);
+static void resize_window_left__BlueWM(struct BlueWMScreen *screen);
 
-static void resize_window_right__BlueWM(void);
+static void resize_window_right__BlueWM(struct BlueWMScreen *screen);
 
-static void resize_window_up__BlueWM(void);
+static void resize_window_up__BlueWM(struct BlueWMScreen *screen);
 
-static void resize_window_down__BlueWM(void);
+static void resize_window_down__BlueWM(struct BlueWMScreen *screen);
 
 static void handle_key_press_event__BlueWM(const XEvent *event);
 
@@ -167,7 +167,6 @@ static void (*const handle_event_functions[])(const XEvent *) = {
 };
 static Atom atoms[BLUE_WM_ATOM_MAX] = {0};
 static struct BlueWMWorkspace workspaces[BLUE_WM_WORKSPACE_NUMBER] = {0};
-static struct BlueWMWorkspace *current_workspace = &workspaces[0];
 static Cursor cursor = {0};
 static Display *display = NULL;
 static struct BlueWMScreen *screens = NULL;
@@ -431,14 +430,16 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 	}
 }
 
-void launch_terminal__BlueWM(void)
+void launch_terminal__BlueWM(struct BlueWMScreen *screen)
 {
 	launch_builtin_program__BlueWM("xterm", NULL);
 }
 
-void toggle_resize_window__BlueWM(void)
+void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
 {
-	if (!current_workspace->active) {
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+
+	if (!workspace->active) {
 		return;
 	} else if (window_to_resize != None) {
 		window_to_resize = None;
@@ -446,7 +447,7 @@ void toggle_resize_window__BlueWM(void)
 		return;
 	}
 
-	window_to_resize = current_workspace->active->window;
+	window_to_resize = workspace->active->window;
 }
 
 #define RESIZE_WINDOW_MOTION(width_change, height_change) \
@@ -462,22 +463,22 @@ void toggle_resize_window__BlueWM(void)
 \
 	XResizeWindow(display, window_to_resize, window_attr.width width_change, window_attr.height height_change);
 
-void resize_window_left__BlueWM(void)
+void resize_window_left__BlueWM(struct BlueWMScreen *screen)
 {
 	RESIZE_WINDOW_MOTION(+10, +0);
 }
 
-void resize_window_right__BlueWM(void)
+void resize_window_right__BlueWM(struct BlueWMScreen *screen)
 {
 	RESIZE_WINDOW_MOTION(-10, +0);
 }
 
-void resize_window_up__BlueWM(void)
+void resize_window_up__BlueWM(struct BlueWMScreen *screen)
 {
 	RESIZE_WINDOW_MOTION(+0, +10);
 }
 
-void resize_window_down__BlueWM(void)
+void resize_window_down__BlueWM(struct BlueWMScreen *screen)
 {
 	RESIZE_WINDOW_MOTION(+0, -10);
 }
@@ -496,7 +497,9 @@ void handle_key_press_event__BlueWM(const XEvent *event)
 		if (state_mask == shortcut->state && shortcut->sym == sym) {
 			assert(shortcut->handler && "Expected to have an handler");
 
-			shortcut->handler();
+			struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xkey.window);
+
+			shortcut->handler(screen);
 		}
 	}
 }
