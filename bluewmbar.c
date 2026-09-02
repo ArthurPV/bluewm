@@ -30,6 +30,8 @@ static char *current_window_title = NULL;
 static size_t current_window_title_len = 0;
 static Atom active_window_atom = {0};
 static Atom wm_name_atom = {0};
+static Atom resize_window_atom = {0};
+static bool resizing_window = false;
 
 static void draw_bg__BlueWMBar(void);
 
@@ -50,6 +52,8 @@ static void handle_active_window_notify__BlueWMBar(const XEvent *event);
 static void fetch_window_title__BlueWMBar(void);
 
 static inline void handle_wm_name_notify__BlueWMBar(void);
+
+static void handle_resize_window_notify__BlueWMBar(const XEvent *event);
 
 static void handle_events__BlueWMBar(void);
 
@@ -91,6 +95,12 @@ void draw_window_title__BlueWMBar(void)
 {
 	if (!current_window_title) {
 		return;
+	}
+
+	if (resizing_window) {
+		XSetForeground(display, window_gc, BLUE_RGB(255, 0, 0));
+	} else {
+		XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
 	}
 
 	XDrawString(display, window_pixels, window_gc, (window_width / 2) - current_window_title_len, WINDOW_MIDDLE(font), current_window_title, current_window_title_len);
@@ -144,6 +154,30 @@ void handle_active_window_notify__BlueWMBar(const XEvent *event)
 	}
 }
 
+void handle_resize_window_notify__BlueWMBar(const XEvent *event)
+{
+	Atom actual_type;
+	int actual_format;
+	unsigned long nitems_return;
+	unsigned long bytes_after_return;
+	unsigned char *prop_return;
+	int status = XGetWindowProperty(display, event->xproperty.window, resize_window_atom, 0, 1, false, XA_WINDOW, &actual_type, &actual_format, &nitems_return, &bytes_after_return, &prop_return);
+
+	if (status == Success && actual_type == XA_WINDOW && actual_format == 32 && nitems_return == 1 && prop_return) {
+		Window resized_window = *(Window*)prop_return;
+
+		if (resized_window == None) {
+			resizing_window = false;
+		} else {
+			resizing_window = true;
+		}
+	}
+
+	if (prop_return) {
+		XFree(prop_return);
+	}
+}
+
 void fetch_window_title__BlueWMBar(void)
 {
 	if (current_window_title) {
@@ -187,6 +221,8 @@ void handle_events__BlueWMBar(void)
 						handle_active_window_notify__BlueWMBar(&event);
 					} else if (event.xproperty.atom == wm_name_atom) {
 						handle_wm_name_notify__BlueWMBar();
+					} else if (event.xproperty.atom == resize_window_atom) {
+						handle_resize_window_notify__BlueWMBar(&event);
 					}
 
 					break;
@@ -254,6 +290,7 @@ int main() {
 
 	active_window_atom = XInternAtom(display, "_NET_ACTIVE_WINDOW", false);
 	wm_name_atom = XInternAtom(display, "_NET_WM_NAME", false);
+	resize_window_atom = XInternAtom(display, "_NET_WM_ACTION_RESIZE", false);
 
 	set_font__BlueWMBar();
 	XSelectInput(display, window, ExposureMask | FocusChangeMask);

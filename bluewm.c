@@ -59,6 +59,7 @@ enum BlueWMAtom {
 	BLUE_WM_ATOM_DOCK,
 	BLUE_WM_ATOM_SPLASH,
 	BLUE_WM_ATOM_ACTIVE_WINDOW,
+	BLUE_WM_ATOM_RESIZE_WINDOW,
 
 	BLUE_WM_ATOM_MAX
 };
@@ -214,10 +215,12 @@ launch_builtin_program__BlueWM(const char *cmd, ...)
 
 static void set_atoms__BlueWM(void)
 {
+	// See enum BlueWMAtom definition
 	static const char *atom_names[BLUE_WM_ATOM_MAX] = {
 		"_NET_WM_WINDOW_TYPE_DOCK",
 		"_NET_WM_WINDOW_TYPE_SPLASH",
-		"_NET_ACTIVE_WINDOW"
+		"_NET_ACTIVE_WINDOW",
+		"_NET_WM_ACTION_RESIZE"
 	};
 
 	for (enum BlueWMAtom atom = 0; atom < BLUE_WM_ATOM_MAX; ++atom) {
@@ -445,7 +448,7 @@ void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 
 	if (!workspace->active) {
-		return;
+		goto update_property;
 	} else if (window_to_resize != None) {
 		XWindowAttributes attr;
 
@@ -459,12 +462,14 @@ void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
 
 		window_to_resize = None;
 
-		return;
+		goto update_property;
 	}
 
 out:
-	printf("Resize\n");
 	window_to_resize = workspace->active->window;
+
+update_property:
+	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_RESIZE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window_to_resize, 1);
 }
 
 #define RESIZE_WINDOW_MOTION(width_change, height_change) \
