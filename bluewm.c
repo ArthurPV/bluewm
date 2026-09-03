@@ -135,6 +135,10 @@ static void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen
 
 static void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
 
+static void grab_keys__BlueWM(Window window_root, bool with_modifier);
+
+static void ungrab_keys__BlueWM(Window window_root, bool with_modifier);
+
 static void notify_active_workspace__BlueWM(const struct BlueWMScreen *screen);
 
 static void toggle_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace);
@@ -281,6 +285,60 @@ free_screen__BlueWM(struct BlueWMScreen *screen)
 	free(screen);
 }
 
+// The lock modifiers are not part of a shortcut, but they are part of the state
+// of the key event, so each shortcut must be grabbed with all their combinations.
+static const unsigned int lock_masks[] = {
+	None,
+	LockMask,
+	Mod2Mask,
+	LockMask | Mod2Mask
+};
+static const size_t lock_masks_len = sizeof(lock_masks) / sizeof(lock_masks[0]);
+
+void
+grab_keys__BlueWM(Window window_root, bool with_modifier)
+{
+	for (size_t i = 0; i < shortcuts_len; ++i) {
+		const struct BlueWMShortcut *shortcut = &shortcuts[i];
+
+		if ((shortcut->state != None) != with_modifier) {
+			continue;
+		}
+
+		KeyCode keycode = XKeysymToKeycode(display, shortcut->sym);
+
+		if (keycode == 0) {
+			continue;
+		}
+
+		for (size_t j = 0; j < lock_masks_len; ++j) {
+			XGrabKey(display, keycode, shortcut->state | lock_masks[j], window_root, false, GrabModeAsync, GrabModeAsync);
+		}
+	}
+}
+
+void
+ungrab_keys__BlueWM(Window window_root, bool with_modifier)
+{
+	for (size_t i = 0; i < shortcuts_len; ++i) {
+		const struct BlueWMShortcut *shortcut = &shortcuts[i];
+
+		if ((shortcut->state != None) != with_modifier) {
+			continue;
+		}
+
+		KeyCode keycode = XKeysymToKeycode(display, shortcut->sym);
+
+		if (keycode == 0) {
+			continue;
+		}
+
+		for (size_t j = 0; j < lock_masks_len; ++j) {
+			XUngrabKey(display, keycode, shortcut->state | lock_masks[j], window_root);
+		}
+	}
+}
+
 void
 set_screens__BlueWM(void)
 {
@@ -297,9 +355,11 @@ set_screens__BlueWM(void)
 		Window window_root = XRootWindow(display, screen_number);
 
 		XSelectInput(display, window_root,
-				KeyPressMask | KeyReleaseMask | ButtonPressMask |
-				ButtonReleaseMask | PointerMotionMask |
+				ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
 				SubstructureNotifyMask | SubstructureRedirectMask);
+
+		// The key events of a focused client are only received through a grab.
+		grab_keys__BlueWM(window_root, true);
 
 		notify_active_workspace__BlueWM(bscreen);
 
@@ -497,11 +557,17 @@ void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
 
 		window_to_resize = None;
 
+		// The shortcuts without any modifier are only grabbed while resizing a
+		// window, otherwise they would be stolen from every client.
+		ungrab_keys__BlueWM(RootWindow(display, screen->screen_number), false);
+
 		goto update_property;
 	}
 
 out:
 	window_to_resize = workspace->active->window;
+
+	grab_keys__BlueWM(RootWindow(display, screen->screen_number), false);
 
 update_property:
 	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_RESIZE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window_to_resize, 1);
