@@ -31,7 +31,9 @@ static size_t current_window_title_len = 0;
 static Atom active_window_atom = {0};
 static Atom wm_name_atom = {0};
 static Atom resize_window_atom = {0};
+static Atom active_workspace_atom = {0};
 static bool resizing_window = false;
+static int active_workspace = -1;
 
 static void draw_bg__BlueWMBar(void);
 
@@ -42,6 +44,8 @@ static void draw_keyboard_layout__BlueWMBar(void);
 static void draw_date__BlueWMBar(void);
 
 static void draw_window_title__BlueWMBar(void);
+
+static void draw_workspaces_number__BlueWMBar(void);
 
 static void draw__BlueWMBar(void);
 
@@ -54,6 +58,10 @@ static void fetch_window_title__BlueWMBar(void);
 static inline void handle_wm_name_notify__BlueWMBar(void);
 
 static void handle_resize_window_notify__BlueWMBar(const XEvent *event);
+
+static void fetch_active_workspace__BlueWMBar(Window window);
+
+static void handle_active_workspace_notify__BlueWMBar(const XEvent *event);
 
 static void handle_events__BlueWMBar(void);
 
@@ -85,7 +93,7 @@ void draw_date__BlueWMBar(void)
 
 	char date[30] = {0};
 
-	strftime(date, 30, "%Y-%m-%d %T", localtime(&tv.tv_sec));
+	strftime(date, sizeof(date) - 1, "%Y-%m-%d %T", localtime(&tv.tv_sec));
 
 	XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
 	XDrawString(display, window_pixels, window_gc, 3, WINDOW_MIDDLE(font), date, strlen(date));
@@ -106,12 +114,36 @@ void draw_window_title__BlueWMBar(void)
 	XDrawString(display, window_pixels, window_gc, (window_width / 2) - current_window_title_len, WINDOW_MIDDLE(font), current_window_title, current_window_title_len);
 }
 
+void draw_workspaces_number__BlueWMBar(void)
+{
+	for (int i = 0; i < BLUE_WM_WORKSPACE_NUMBER; ++i) {
+		// The workspaces are laid out as on the keyboard row: 1, 2, ..., 9, 0.
+		int workspace_number = (i + 1) % BLUE_WM_WORKSPACE_NUMBER;
+		char number[10] = {0};
+
+		snprintf(number, sizeof(number) - 1, "%d", workspace_number);
+
+		if (active_workspace == workspace_number) {
+			XSetForeground(display, window_gc, BLUE_RGB(252, 184, 2));
+		} else {
+			XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
+		}
+
+#define SPACE_FACTOR 2
+
+		XDrawString(display, window_pixels, window_gc, window_width - SPACE_FACTOR * font->ascent * (BLUE_WM_WORKSPACE_NUMBER - i), WINDOW_MIDDLE(font), number, strlen(number));
+
+#undef SPACE_FACTOR
+	}
+}
+
 void draw__BlueWMBar(void)
 {	
 	draw_bg__BlueWMBar();
 	draw_keyboard_layout__BlueWMBar();
 	draw_date__BlueWMBar();
 	draw_window_title__BlueWMBar();
+	draw_workspaces_number__BlueWMBar();
 	XCopyArea(display, window_pixels, window, window_gc, 0, 0, window_width, window_height, 0, 0);
 	XFlush(display);
 }
@@ -178,6 +210,29 @@ void handle_resize_window_notify__BlueWMBar(const XEvent *event)
 	}
 }
 
+void fetch_active_workspace__BlueWMBar(Window window)
+{
+	Atom actual_type;
+	int actual_format;
+	unsigned long nitems_return;
+	unsigned long bytes_after_return;
+	unsigned char *prop_return;
+	int status = XGetWindowProperty(display, window, active_workspace_atom, 0, 1, false, XA_INTEGER, &actual_type, &actual_format, &nitems_return, &bytes_after_return, &prop_return);
+
+	if (status == Success && actual_type == XA_INTEGER && actual_format == 32 && nitems_return == 1 && prop_return) {
+		active_workspace = *(int*)prop_return;
+	}
+
+	if (prop_return) {
+		XFree(prop_return);
+	}
+}
+
+void handle_active_workspace_notify__BlueWMBar(const XEvent *event)
+{
+	fetch_active_workspace__BlueWMBar(event->xproperty.window);
+}
+
 void fetch_window_title__BlueWMBar(void)
 {
 	if (current_window_title) {
@@ -223,6 +278,8 @@ void handle_events__BlueWMBar(void)
 						handle_wm_name_notify__BlueWMBar();
 					} else if (event.xproperty.atom == resize_window_atom) {
 						handle_resize_window_notify__BlueWMBar(&event);
+					} else if (event.xproperty.atom == active_workspace_atom) {
+						handle_active_workspace_notify__BlueWMBar(&event);
 					}
 
 					break;
@@ -291,6 +348,9 @@ int main() {
 	active_window_atom = XInternAtom(display, "_NET_ACTIVE_WINDOW", false);
 	wm_name_atom = XInternAtom(display, "_NET_WM_NAME", false);
 	resize_window_atom = XInternAtom(display, "_NET_WM_ACTION_RESIZE", false);
+	active_workspace_atom = XInternAtom(display, "_BLUE_WM_ACTIVE_WORKSPACE", false);
+
+	fetch_active_workspace__BlueWMBar(window_root);
 
 	set_font__BlueWMBar();
 	XSelectInput(display, window, ExposureMask | FocusChangeMask);

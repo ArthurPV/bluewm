@@ -50,8 +50,6 @@ struct BlueWMLayout {
 	enum BlueWMLayoutKind kind;
 };
 
-#define BLUE_WM_WORKSPACE_NUMBER 10
-
 struct BlueWMWorkspace {
 	struct BlueWMClient *clients;
 	struct BlueWMClient *active;
@@ -63,6 +61,7 @@ enum BlueWMAtom {
 	BLUE_WM_ATOM_SPLASH,
 	BLUE_WM_ATOM_ACTIVE_WINDOW,
 	BLUE_WM_ATOM_RESIZE_WINDOW,
+	BLUE_WM_ATOM_ACTIVE_WORKSPACE, // custom
 
 	BLUE_WM_ATOM_MAX
 };
@@ -135,6 +134,8 @@ static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 static void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
 
 static void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
+
+static void notify_active_workspace__BlueWM(const struct BlueWMScreen *screen);
 
 static void toggle_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace);
 
@@ -251,7 +252,8 @@ static void set_atoms__BlueWM(void)
 		"_NET_WM_WINDOW_TYPE_DOCK",
 		"_NET_WM_WINDOW_TYPE_SPLASH",
 		"_NET_ACTIVE_WINDOW",
-		"_NET_WM_ACTION_RESIZE"
+		"_NET_WM_ACTION_RESIZE",
+		"_BLUE_WM_ACTIVE_WORKSPACE",
 	};
 
 	for (enum BlueWMAtom atom = 0; atom < BLUE_WM_ATOM_MAX; ++atom) {
@@ -282,15 +284,15 @@ free_screen__BlueWM(struct BlueWMScreen *screen)
 void
 set_screens__BlueWM(void)
 {
-	int screen_count = ScreenCount(display);
+	// NOTE: We initialize at worst 10 screens
+	int screen_count = ScreenCount(display) % BLUE_WM_WORKSPACE_NUMBER;
 
-	for (int screen_number = 0; screen_number < screen_count; ++screen_number) {	
+	for (int screen_number = 0, workspace = 1; screen_number < screen_count; ++screen_number, ++workspace) {
 		struct BlueWMScreen *bscreen = BLUE_ZERO_ALLOC(sizeof(struct BlueWMScreen));
 
 		bscreen->screen_number = screen_number;
 		bscreen->next = screens;
-		// In case we have more screen than workspace
-		bscreen->workspace = screen_number % BLUE_WM_WORKSPACE_NUMBER;
+		bscreen->workspace = workspace % BLUE_WM_WORKSPACE_NUMBER;
 
 		Window window_root = XRootWindow(display, screen_number);
 
@@ -298,6 +300,8 @@ set_screens__BlueWM(void)
 				KeyPressMask | KeyReleaseMask | ButtonPressMask |
 				ButtonReleaseMask | PointerMotionMask |
 				SubstructureNotifyMask | SubstructureRedirectMask);
+
+		notify_active_workspace__BlueWM(bscreen);
 
 		screens = bscreen;
 	}
@@ -596,6 +600,11 @@ void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen)
 	}
 }
 
+static void notify_active_workspace__BlueWM(const struct BlueWMScreen *screen)
+{
+	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_ACTIVE_WORKSPACE], XA_INTEGER, 32, PropModeReplace, (unsigned char*)&screen->workspace, 1);
+}
+
 void toggle_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace)
 {
 	if (screen->workspace == workspace) {
@@ -605,6 +614,9 @@ void toggle_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace)
 	unmap_all_windows_from_current_workspace__BlueWM(screen);
 	screen->workspace = workspace;
 	map_all_windows_from_current_workspace__BlueWM(screen);
+
+	// Notify the change of the workspace
+	notify_active_workspace__BlueWM(screen);
 }
 
 #define TOGGLE_WORKSPACE_N(n) \
