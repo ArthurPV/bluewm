@@ -543,7 +543,7 @@ void handle_key_release_event__BlueWM(const XEvent *event)
 void update_button_state_mask__BlueWM(const XEvent *event)
 {
 	unsigned int button1 = event->xbutton.state & Button1Mask ? Button1Mask : None;
-	unsigned int button2 = event->xbutton.state & Button2Mask ? Button1Mask : None;
+	unsigned int button2 = event->xbutton.state & Button2Mask ? Button2Mask : None;
 
 	button_state_mask = button1 | button2;
 }
