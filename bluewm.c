@@ -26,6 +26,9 @@ struct BlueWMClient {
 	int client_state_mask;
 	Window window;
 	struct BlueWMClient *next;
+	int saved_width;
+	int saved_height;
+	bool is_fullscreen;
 };
 
 struct BlueWMScreen {
@@ -126,6 +129,8 @@ static void resize_window_right__BlueWM(struct BlueWMScreen *screen);
 static void resize_window_up__BlueWM(struct BlueWMScreen *screen);
 
 static void resize_window_down__BlueWM(struct BlueWMScreen *screen);
+
+static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 
 static void update_key_state_mask__BlueWM(const XEvent *event);
 
@@ -507,6 +512,42 @@ void resize_window_down__BlueWM(struct BlueWMScreen *screen)
 
 #undef RESIZE_WINDOW_MOTION
 
+void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
+{
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+
+	if (!workspace->active) {
+		return;
+	}
+
+	Window active_window = workspace->active->window;
+
+	if (workspace->active->is_fullscreen) {
+		XResizeWindow(display, active_window, workspace->active->saved_width, workspace->active->saved_height);
+
+		workspace->active->is_fullscreen = false;
+		workspace->active->saved_width = 0;
+		workspace->active->saved_height = 0;
+
+		return;
+	}
+
+	XWindowAttributes window_attr;
+
+	if (XGetWindowAttributes(display, active_window, &window_attr) == 0) {
+		BLUE_LOG_ERROR("unable to get window attributes");
+	}
+
+	int screen_width = DisplayWidth(display, screen->screen_number);
+	int screen_height = DisplayHeight(display, screen->screen_number);
+
+	XResizeWindow(display, active_window, screen_width, screen_height);
+
+	workspace->active->is_fullscreen = true;
+	workspace->active->saved_width = window_attr.width;
+	workspace->active->saved_height = window_attr.height;
+}
+
 static void update_key_state_mask__BlueWM(const XEvent *event)
 {
 	unsigned int mod4 = event->xkey.state & Mod4Mask ? Mod4Mask : None;
@@ -523,7 +564,7 @@ void handle_key_press_event__BlueWM(const XEvent *event)
 	update_key_state_mask__BlueWM(event);
 
 	for (size_t i = 0; i < shortcuts_len; ++i) {
-		struct BlueWMShortcut *shortcut = &shortcuts[i];
+		const struct BlueWMShortcut *shortcut = &shortcuts[i];
 
 		if (key_state_mask == shortcut->state && shortcut->sym == sym) {
 			assert(shortcut->handler && "Expected to have an handler");
@@ -710,7 +751,7 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 		XMoveWindow(display, window, new_x, new_y);
 	}
 
-	XSelectInput(display, window, KeyPressMask | KeyReleaseMask);
+	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask);
 	XMapWindow(display, window);
 }
 
