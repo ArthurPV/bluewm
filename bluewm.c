@@ -132,6 +132,32 @@ static void resize_window_down__BlueWM(struct BlueWMScreen *screen);
 
 static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 
+static void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
+
+static void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
+
+static void toggle_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace);
+
+static inline void toggle_workspace_1__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_2__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_3__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_4__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_5__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_6__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_7__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_8__BlueWM(struct BlueWMScreen *screen);
+
+static inline void toggle_workspace_9__BlueWM(struct BlueWMScreen *screen);
+
+static void toggle_workspace_0__BlueWM(struct BlueWMScreen *screen);
+
 static void update_key_state_mask__BlueWM(const XEvent *event);
 
 static void handle_key_press_event__BlueWM(const XEvent *event);
@@ -547,6 +573,57 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 	workspace->active->saved_width = window_attr.width;
 	workspace->active->saved_height = window_attr.height;
 }
+
+void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen)
+{
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+	struct BlueWMClient *current = workspace->clients;
+
+	while (current) {
+		XUnmapWindow(display, current->window);
+		current = current->next;
+	}
+}
+
+void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen)
+{
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+	struct BlueWMClient *current = workspace->clients;
+
+	while (current) {
+		XMapWindow(display, current->window);
+		current = current->next;
+	}
+}
+
+void toggle_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace)
+{
+	if (screen->workspace == workspace) {
+		return;
+	}
+
+	unmap_all_windows_from_current_workspace__BlueWM(screen);
+	screen->workspace = workspace;
+	map_all_windows_from_current_workspace__BlueWM(screen);
+}
+
+#define TOGGLE_WORKSPACE_N(n) \
+void toggle_workspace_##n##__BlueWM(struct BlueWMScreen *screen) { \
+	toggle_workspace_n__BlueWM(screen, n); \
+}
+
+TOGGLE_WORKSPACE_N(1)
+TOGGLE_WORKSPACE_N(2)
+TOGGLE_WORKSPACE_N(3)
+TOGGLE_WORKSPACE_N(4)
+TOGGLE_WORKSPACE_N(5)
+TOGGLE_WORKSPACE_N(6)
+TOGGLE_WORKSPACE_N(7)
+TOGGLE_WORKSPACE_N(8)
+TOGGLE_WORKSPACE_N(9)
+TOGGLE_WORKSPACE_N(0)
+
+#undef TOGGLE_WORKSPACE_N
 
 static void update_key_state_mask__BlueWM(const XEvent *event)
 {
