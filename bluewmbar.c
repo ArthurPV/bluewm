@@ -111,7 +111,11 @@ void draw_window_title__BlueWMBar(void)
 		XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
 	}
 
-	XDrawString(display, window_pixels, window_gc, (window_width / 2) - current_window_title_len, WINDOW_MIDDLE(font), current_window_title, current_window_title_len);
+	// The title is centered on its width in pixels, not on its number of
+	// characters.
+	int title_width = XTextWidth(font, current_window_title, current_window_title_len);
+
+	XDrawString(display, window_pixels, window_gc, (window_width - title_width) / 2, WINDOW_MIDDLE(font), current_window_title, current_window_title_len);
 }
 
 void draw_workspaces_number__BlueWMBar(void)
