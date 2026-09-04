@@ -28,6 +28,8 @@ struct BlueWMClient {
 	struct BlueWMClient *next;
 	int saved_width;
 	int saved_height;
+	int saved_x;
+	int saved_y;
 	bool is_fullscreen;
 };
 
@@ -671,11 +673,18 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 	Window active_window = workspace->active->window;
 
 	if (workspace->active->is_fullscreen) {
-		XResizeWindow(display, active_window, workspace->active->saved_width, workspace->active->saved_height);
+		XMoveResizeWindow(display, active_window, workspace->active->saved_x, workspace->active->saved_y, workspace->active->saved_width, workspace->active->saved_height);
 
 		workspace->active->is_fullscreen = false;
 		workspace->active->saved_width = 0;
 		workspace->active->saved_height = 0;
+		workspace->active->saved_x = 0;
+		workspace->active->saved_y = 0;
+
+		// The dock is back over the clients.
+		if (screen->dock) {
+			XConfigureWindow(display, screen->dock->window, CWStackMode, &(XWindowChanges){ .stack_mode = Above });
+		}
 
 		return;
 	}
@@ -689,11 +698,14 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 	int screen_width = DisplayWidth(display, screen->screen_number);
 	int screen_height = DisplayHeight(display, screen->screen_number);
 
-	XResizeWindow(display, active_window, screen_width, screen_height);
+	XMoveResizeWindow(display, active_window, 0, 0, screen_width, screen_height);
+	XRaiseWindow(display, active_window);
 
 	workspace->active->is_fullscreen = true;
 	workspace->active->saved_width = window_attr.width;
 	workspace->active->saved_height = window_attr.height;
+	workspace->active->saved_x = window_attr.x;
+	workspace->active->saved_y = window_attr.y;
 }
 
 bool window_supports_delete__BlueWM(Window window)
