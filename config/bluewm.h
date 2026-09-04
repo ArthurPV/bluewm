@@ -14,6 +14,7 @@ struct BlueWMShortcut {
 static const struct BlueWMShortcut shortcuts[] = {
 	BLUE_WM_SHORTCUT(Mod4Mask, XK_Return, &launch_terminal__BlueWM),
 	BLUE_WM_SHORTCUT(Mod4Mask, XK_r, &toggle_resize_window__BlueWM),
+	BLUE_WM_SHORTCUT(Mod4Mask, XK_d, &launch_launcher__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Left, &resize_window_left__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Right, &resize_window_right__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Up, &resize_window_up__BlueWM),

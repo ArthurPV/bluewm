@@ -155,6 +155,8 @@ static void new_client__BlueWM(Window window, enum BlueWMClientRole role);
 
 static void launch_terminal__BlueWM(struct BlueWMScreen *screen);
 
+static void launch_launcher__BlueWM(struct BlueWMScreen *screen);
+
 static void toggle_resize_window__BlueWM(struct BlueWMScreen *screen);
 
 static void resize_window_left__BlueWM(struct BlueWMScreen *screen);
@@ -606,6 +608,11 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 void launch_terminal__BlueWM(struct BlueWMScreen *screen)
 {
 	launch_builtin_program__BlueWM("xterm", NULL);
+}
+
+void launch_launcher__BlueWM(struct BlueWMScreen *screen)
+{
+	launch_builtin_program__BlueWM("./bluewmlauncher", NULL);
 }
 
 void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
@@ -1090,35 +1097,23 @@ bool window_is_on_dock__BlueWM(const struct BlueWMScreen *screen, const XWindowA
 		BLUE_LOG_ERROR("unable to get dock attributes\n");
 	}
 
-	int window_y = window_attr->y;
-	int window_y2 = window_attr->y + window_attr->height;
-	int dock_y = dock_attr.y;
-	int dock_y2 = dock_attr.y + dock_attr.height;
+	// Two rectangles only overlap if they overlap on both axes.
+	bool overlap_x = window_attr->x < dock_attr.x + dock_attr.width && dock_attr.x < window_attr->x + window_attr->width;
+	bool overlap_y = window_attr->y < dock_attr.y + dock_attr.height && dock_attr.y < window_attr->y + window_attr->height;
 
-	if (dock_y2 > window_y) {
-		*new_y += dock_y2 - window_y;
-
-		return true;
-	} else if (window_y2 > dock_y) {
-		*new_y -= window_y2 - dock_y;
-
-		return true;
+	if (!overlap_x || !overlap_y) {
+		return false;
 	}
 
-	int window_x = window_attr->x;
-	int window_x2 = window_attr->x + window_attr->width;
-	int dock_x = dock_attr.x;
-	int dock_x2 = dock_attr.x + dock_attr.width;
-
-	if (dock_x2 > window_x) {
-		*new_x += dock_x2 - window_x;
-
-		return true;
-	} else if (window_x2 > dock_x) {
-		*new_x -= window_x2 - dock_x;
+	// The dock spans the whole width of the screen, so the window is moved out
+	// of it on the vertical axis, on the side where the dock is not.
+	if (dock_attr.y <= window_attr->y) {
+		*new_y = dock_attr.y + dock_attr.height;
+	} else {
+		*new_y = dock_attr.y - window_attr->height;
 	}
 
-	return false;
+	return true;
 }
 
 void handle_map_request_event__BlueWM(const XEvent *event)
