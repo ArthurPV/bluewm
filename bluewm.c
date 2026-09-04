@@ -106,7 +106,23 @@ get_screen_from_window__BlueWM(Window window);
 static struct BlueWMScreen *
 find_screen_from_root_window__BlueWM(Window root);
 
-static enum BlueWMClientRole
+static struct BlueWMClient *
+find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window window)
+{
+	struct BlueWMClient *current = workspace->clients;
+
+	while (current) {
+		if (current->window == window) {
+			return current;
+		}
+
+		current = current->next;
+	}
+
+	return NULL;
+}
+
+enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom);
 
 static void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *screen);
@@ -138,6 +154,10 @@ static void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *
 static void grab_keys__BlueWM(Window window_root, bool with_modifier);
 
 static void ungrab_keys__BlueWM(Window window_root, bool with_modifier);
+
+static void grab_buttons__BlueWM(Window window_root);
+
+static struct BlueWMClient *find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window window);
 
 static void notify_active_workspace__BlueWM(const struct BlueWMScreen *screen);
 
@@ -213,6 +233,11 @@ static Display *display = NULL;
 static struct BlueWMScreen *screens = NULL;
 static bool is_running = true;
 static Window window_to_resize = None;
+static Window window_to_move = None;
+// Distance between the pointer and the origin of `window_to_move`, to keep the
+// window under the same point of the pointer during the whole move.
+static int window_to_move_offset_x = 0;
+static int window_to_move_offset_y = 0;
 static int key_state_mask = 0;
 static int button_state_mask = 0;
 
@@ -340,6 +365,14 @@ ungrab_keys__BlueWM(Window window_root, bool with_modifier)
 }
 
 void
+grab_buttons__BlueWM(Window window_root)
+{
+	for (size_t i = 0; i < lock_masks_len; ++i) {
+		XGrabButton(display, Button1, BLUE_WM_MOVE_WINDOW_MASK | lock_masks[i], window_root, false, ButtonPressMask | ButtonReleaseMask | PointerMotionMask, GrabModeAsync, GrabModeAsync, None, None);
+	}
+}
+
+void
 set_screens__BlueWM(void)
 {
 	// NOTE: We initialize at worst 10 screens
@@ -358,8 +391,10 @@ set_screens__BlueWM(void)
 				ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
 				SubstructureNotifyMask | SubstructureRedirectMask);
 
-		// The key events of a focused client are only received through a grab.
+		// The key and button events of a focused client are only received
+		// through a grab.
 		grab_keys__BlueWM(window_root, true);
+		grab_buttons__BlueWM(window_root);
 
 		notify_active_workspace__BlueWM(bscreen);
 
@@ -738,31 +773,82 @@ void handle_key_release_event__BlueWM(const XEvent *event)
 
 void update_button_state_mask__BlueWM(const XEvent *event)
 {
-	unsigned int button1 = event->xbutton.state & Button1Mask ? Button1Mask : None;
-	unsigned int button2 = event->xbutton.state & Button2Mask ? Button2Mask : None;
+	// The state of a button event is the state before the event itself, so the
+	// button of the event is added (or removed) by hand.
+	unsigned int mask = event->xbutton.state & (Button1Mask | Button2Mask);
 
-	button_state_mask = button1 | button2;
+	switch (event->xbutton.button) {
+		case Button1:
+			mask = event->type == ButtonPress ? mask | Button1Mask : mask & ~Button1Mask;
+
+			break;
+		case Button2:
+			mask = event->type == ButtonPress ? mask | Button2Mask : mask & ~Button2Mask;
+
+			break;
+		default:
+			break;
+	}
+
+	button_state_mask = mask;
 }
 
 void handle_button_press_event__BlueWM(const XEvent *event)
 {
 	update_button_state_mask__BlueWM(event);
+
+	// The grab is done on the root window, so the client under the pointer is
+	// the sub-window of the event.
+	Window window = event->xbutton.subwindow;
+
+	if (event->xbutton.button != Button1 || !(event->xbutton.state & BLUE_WM_MOVE_WINDOW_MASK) || window == None) {
+		return;
+	}
+
+	// Only a regular client can be moved: the dock and the splash are placed by
+	// the WM itself, and they are the only clients out of the workspaces.
+	struct BlueWMScreen *screen = find_screen_from_root_window__BlueWM(event->xbutton.root);
+
+	if (!find_client_from_window__BlueWM(&workspaces[screen->workspace], window)) {
+		return;
+	}
+
+	XWindowAttributes window_attr;
+
+	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
+		return;
+	}
+
+	window_to_move = window;
+	window_to_move_offset_x = event->xbutton.x_root - window_attr.x;
+	window_to_move_offset_y = event->xbutton.y_root - window_attr.y;
+
+	XRaiseWindow(display, window_to_move);
 }
 
 void handle_button_release_event__BlueWM(const XEvent *event)
 {
 	update_button_state_mask__BlueWM(event);
+
+	if (event->xbutton.button == Button1) {
+		window_to_move = None;
+	}
 }
 
 void handle_motion_notify_event__BlueWM(const XEvent *event)
 {
-	if (key_state_mask & Mod4Mask && button_state_mask & Button1Mask) {
-		XMoveWindow(display, event->xmotion.window, event->xmotion.x_root, event->xmotion.y_root);
+	if (window_to_move != None) {
+		XMoveWindow(display, window_to_move, event->xmotion.x_root - window_to_move_offset_x, event->xmotion.y_root - window_to_move_offset_y);
 	} else {
 		Window window_root = event->xmotion.root;
 		struct BlueWMScreen *screen = find_screen_from_root_window__BlueWM(window_root);
 		const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
-		Window new_focused_window = event->xmotion.window;
+		// During a grab, the motion is reported on the root window itself.
+		Window new_focused_window = event->xmotion.window == window_root ? event->xmotion.subwindow : event->xmotion.window;
+
+		if (new_focused_window == None) {
+			return;
+		}
 
 		if (!workspace->active || workspace->active->window != new_focused_window) {
 			update_active_window_from_workspaces__BlueWM(screen, new_focused_window);

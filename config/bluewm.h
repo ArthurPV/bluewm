@@ -38,6 +38,11 @@ static const struct BlueWMShortcut shortcuts[] = {
 };
 static const size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
 
+#undef BLUE_WM_MOVE_WINDOW_MASK
+
+// Modifier to hold to move a window with the left button of the mouse.
+#define BLUE_WM_MOVE_WINDOW_MASK Mod4Mask
+
 #undef BLUE_WM_CONFIG_BG_PATH
 
 #define BLUE_WM_CONFIG_BG_PATH "./bg.jpg"
