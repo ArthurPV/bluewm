@@ -846,7 +846,9 @@ void handle_motion_notify_event__BlueWM(const XEvent *event)
 		// During a grab, the motion is reported on the root window itself.
 		Window new_focused_window = event->xmotion.window == window_root ? event->xmotion.subwindow : event->xmotion.window;
 
-		if (new_focused_window == None) {
+		// Only a regular client can be focused: the dock and the splash are the
+		// only clients out of the workspaces.
+		if (!find_client_from_window__BlueWM(workspace, new_focused_window)) {
 			return;
 		}
 
