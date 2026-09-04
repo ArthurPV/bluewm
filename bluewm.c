@@ -126,6 +126,22 @@ find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window 
 	return NULL;
 }
 
+struct BlueWMClient *
+find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace)
+{
+	struct BlueWMClient *current = workspace->clients;
+
+	while (current) {
+		if (current->is_fullscreen) {
+			return current;
+		}
+
+		current = current->next;
+	}
+
+	return NULL;
+}
+
 enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom);
 
@@ -984,6 +1000,15 @@ void handle_map_notify_event__BlueWM(const XEvent *event)
 
 	if (window_atoms) {
 		XFree(window_atoms);
+	}
+
+	// A new window is mapped over the others, so the full screen window has to
+	// be raised again to stay the only one visible.
+	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xmap.event);
+	const struct BlueWMClient *full_screen_client = find_full_screen_client__BlueWM(&workspaces[screen->workspace]);
+
+	if (full_screen_client && full_screen_client->window != window) {
+		XRaiseWindow(display, full_screen_client->window);
 	}
 }
 
