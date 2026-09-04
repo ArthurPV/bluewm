@@ -197,6 +197,12 @@ static void handle_button_release_event__BlueWM(const XEvent *event);
 
 static void handle_motion_notify_event__BlueWM(const XEvent *event);
 
+static void handle_enter_notify_event__BlueWM(const XEvent *event);
+
+static void focus_window__BlueWM(struct BlueWMScreen *screen, Window window);
+
+static void notify_active_window__BlueWM(const struct BlueWMScreen *screen, Window window);
+
 static void handle_map_notify_event__BlueWM(const XEvent *event);
 
 static void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *screen, Window window);
@@ -221,6 +227,7 @@ static void (*const handle_event_functions[])(const XEvent *) = {
 	[ButtonPress] = &handle_button_press_event__BlueWM,
 	[ButtonRelease] = &handle_button_release_event__BlueWM,
 	[MotionNotify] = &handle_motion_notify_event__BlueWM,
+	[EnterNotify] = &handle_enter_notify_event__BlueWM,
 	[MapNotify] = &handle_map_notify_event__BlueWM, 
 	[UnmapNotify] = &handle_unmap_notify_event__BlueWM,
 	[MapRequest] = &handle_map_request_event__BlueWM,
@@ -387,8 +394,10 @@ set_screens__BlueWM(void)
 
 		Window window_root = XRootWindow(display, screen_number);
 
+		// The motion of a move is reported by the grab itself, so it is not
+		// selected here.
 		XSelectInput(display, window_root,
-				ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
+				ButtonPressMask | ButtonReleaseMask |
 				SubstructureNotifyMask | SubstructureRedirectMask);
 
 		// The key and button events of a focused client are only received
@@ -536,13 +545,10 @@ void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen)
 	struct BlueWMClient *client = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_NONE, window);
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 
-	if (workspace->clients) {
-		workspace->clients->next = client;
-	} else {
-		workspace->clients = client;
-	}
+	client->next = workspace->clients;
+	workspace->clients = client;
 
-	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_ACTIVE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window, 1);
+	notify_active_window__BlueWM(screen, window);
 	workspace->active = client;
 }
 
@@ -701,6 +707,11 @@ void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen)
 	}
 }
 
+void notify_active_window__BlueWM(const struct BlueWMScreen *screen, Window window)
+{
+	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_ACTIVE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window, 1);
+}
+
 static void notify_active_workspace__BlueWM(const struct BlueWMScreen *screen)
 {
 	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_ACTIVE_WORKSPACE], XA_INTEGER, 32, PropModeReplace, (unsigned char*)&screen->workspace, 1);
@@ -715,6 +726,14 @@ void toggle_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace)
 	unmap_all_windows_from_current_workspace__BlueWM(screen);
 	screen->workspace = workspace;
 	map_all_windows_from_current_workspace__BlueWM(screen);
+
+	// The window with the input focus has just been unmapped, so the focus is
+	// given to the active window of the new workspace.
+	const struct BlueWMWorkspace *new_workspace = &workspaces[screen->workspace];
+	Window new_active_window = new_workspace->active ? new_workspace->active->window : None;
+
+	XSetInputFocus(display, new_active_window == None ? PointerRoot : new_active_window, RevertToPointerRoot, CurrentTime);
+	notify_active_window__BlueWM(screen, new_active_window);
 
 	// Notify the change of the workspace
 	notify_active_workspace__BlueWM(screen);
@@ -839,24 +858,35 @@ void handle_motion_notify_event__BlueWM(const XEvent *event)
 {
 	if (window_to_move != None) {
 		XMoveWindow(display, window_to_move, event->xmotion.x_root - window_to_move_offset_x, event->xmotion.y_root - window_to_move_offset_y);
-	} else {
-		Window window_root = event->xmotion.root;
-		struct BlueWMScreen *screen = find_screen_from_root_window__BlueWM(window_root);
-		const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
-		// During a grab, the motion is reported on the root window itself.
-		Window new_focused_window = event->xmotion.window == window_root ? event->xmotion.subwindow : event->xmotion.window;
-
-		// Only a regular client can be focused: the dock and the splash are the
-		// only clients out of the workspaces.
-		if (!find_client_from_window__BlueWM(workspace, new_focused_window)) {
-			return;
-		}
-
-		if (!workspace->active || workspace->active->window != new_focused_window) {
-			update_active_window_from_workspaces__BlueWM(screen, new_focused_window);
-			XSetInputFocus(display, new_focused_window, RevertToPointerRoot, CurrentTime);
-		}
 	}
+}
+
+void focus_window__BlueWM(struct BlueWMScreen *screen, Window window)
+{
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+	// Only a regular client can be focused: the dock and the splash are the
+	// only clients out of the workspaces.
+	struct BlueWMClient *client = find_client_from_window__BlueWM(workspace, window);
+
+	if (!client || workspace->active == client) {
+		return;
+	}
+
+	workspace->active = client;
+
+	notify_active_window__BlueWM(screen, window);
+	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
+}
+
+void handle_enter_notify_event__BlueWM(const XEvent *event)
+{
+	// A grab (moving a window) or a window appearing under the pointer also
+	// sends an enter event, but the pointer did not enter a new window.
+	if (event->xcrossing.mode != NotifyNormal || event->xcrossing.detail == NotifyInferior) {
+		return;
+	}
+
+	focus_window__BlueWM(find_screen_from_root_window__BlueWM(event->xcrossing.root), event->xcrossing.window);
 }
 
 void handle_map_notify_event__BlueWM(const XEvent *event)
@@ -885,9 +915,7 @@ void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *scr
 		struct BlueWMWorkspace *workspace = &workspaces[i];
 
 		if (workspace->active && workspace->active->window == window) {
-			Window new_window = None;
-
-			XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_ACTIVE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&new_window, 1);
+			notify_active_window__BlueWM(screen, None);
 			workspace->active = NULL;
 
 			break;
@@ -994,7 +1022,9 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 		XMoveWindow(display, window, new_x, new_y);
 	}
 
-	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask);
+	// The enter events are what drives the focus follow the pointer, and they
+	// are only received by selecting them on the client itself.
+	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | EnterWindowMask);
 	XMapWindow(display, window);
 }
 
@@ -1031,6 +1061,7 @@ void handle_events__BlueWM(void)
 			case ButtonPress:
 			case ButtonRelease:
 			case MotionNotify:
+			case EnterNotify:
 			case MapNotify:
 			case UnmapNotify:
 			case MapRequest:
