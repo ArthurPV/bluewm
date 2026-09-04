@@ -1009,6 +1009,8 @@ void handle_map_notify_event__BlueWM(const XEvent *event)
 
 	if (full_screen_client && full_screen_client->window != window) {
 		XRaiseWindow(display, full_screen_client->window);
+		// The new window is hidden behind, so it must not keep the focus.
+		focus_window__BlueWM(screen, full_screen_client->window);
 	}
 }
 
