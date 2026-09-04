@@ -67,6 +67,8 @@ static void handle_events__BlueWMBar(void);
 
 static void close__BlueWMBar(void);
 
+static int handle_error__BlueWMBar(Display *error_display, XErrorEvent *error);
+
 void draw_bg__BlueWMBar(void)
 {
 	XSetForeground(display, window_gc, window_bg_color);
@@ -310,6 +312,22 @@ void handle_events__BlueWMBar(void)
 	}
 }
 
+int handle_error__BlueWMBar(Display *error_display, XErrorEvent *error)
+{
+	// A window can be destroyed between the moment the WM notifies it and the
+	// moment it is used here, and the bar must not die with it.
+	if (error->error_code == BadWindow) {
+		return 0;
+	}
+
+	char message[256] = {0};
+
+	XGetErrorText(error_display, error->error_code, message, sizeof(message));
+	BLUE_LOG_WARNING("%s\n", message);
+
+	return 0;
+}
+
 void close__BlueWMBar(void)
 {
 	XFreeGC(display, window_gc);
@@ -322,6 +340,8 @@ int main() {
 	if (!(display = XOpenDisplay(NULL))) {
 		BLUE_LOG_ERROR("unable to open display\n");
 	}
+
+	XSetErrorHandler(&handle_error__BlueWMBar);
 
 	Window window_root = XDefaultRootWindow(display);
 	XWindowAttributes window_root_attr;
