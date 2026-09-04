@@ -19,6 +19,7 @@ static const struct BlueWMShortcut shortcuts[] = {
 	BLUE_WM_SHORTCUT(None, XK_Up, &resize_window_up__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Down, &resize_window_down__BlueWM),
 	BLUE_WM_SHORTCUT(Mod4Mask, XK_f, &toggle_full_screen_window__BlueWM),
+	BLUE_WM_SHORTCUT(Mod4Mask | ShiftMask, XK_q, &close_window__BlueWM),
 
 #define BLUE_WM_SHORTCUT_WORKSPACE(n) \
 	BLUE_WM_SHORTCUT(Mod4Mask, XK_##n, &toggle_workspace_##n##__BlueWM)

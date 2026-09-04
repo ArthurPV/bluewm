@@ -62,6 +62,8 @@ enum BlueWMAtom {
 	BLUE_WM_ATOM_ACTIVE_WINDOW,
 	BLUE_WM_ATOM_RESIZE_WINDOW,
 	BLUE_WM_ATOM_ACTIVE_WORKSPACE, // custom
+	BLUE_WM_ATOM_PROTOCOLS,
+	BLUE_WM_ATOM_DELETE_WINDOW,
 
 	BLUE_WM_ATOM_MAX
 };
@@ -147,6 +149,10 @@ static void resize_window_down__BlueWM(struct BlueWMScreen *screen);
 
 static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 
+static bool window_supports_delete__BlueWM(Window window);
+
+static void close_window__BlueWM(struct BlueWMScreen *screen);
+
 static void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
 
 static void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
@@ -211,6 +217,8 @@ static void remove_client__BlueWM(const struct BlueWMScreen *screen, Window wind
 
 static void handle_unmap_notify_event__BlueWM(const XEvent *event);
 
+static void handle_destroy_notify_event__BlueWM(const XEvent *event);
+
 static bool window_is_on_dock__BlueWM(const struct BlueWMScreen *screen, const XWindowAttributes *window_attr, int *new_x, int *new_y);
 
 static void handle_map_request_event__BlueWM(const XEvent *event);
@@ -230,6 +238,7 @@ static void (*const handle_event_functions[])(const XEvent *) = {
 	[EnterNotify] = &handle_enter_notify_event__BlueWM,
 	[MapNotify] = &handle_map_notify_event__BlueWM, 
 	[UnmapNotify] = &handle_unmap_notify_event__BlueWM,
+	[DestroyNotify] = &handle_destroy_notify_event__BlueWM,
 	[MapRequest] = &handle_map_request_event__BlueWM,
 	[ConfigureRequest] = &handle_configure_request_event__BlueWM
 };
@@ -290,6 +299,8 @@ static void set_atoms__BlueWM(void)
 		"_NET_ACTIVE_WINDOW",
 		"_NET_WM_ACTION_RESIZE",
 		"_BLUE_WM_ACTIVE_WORKSPACE",
+		"WM_PROTOCOLS",
+		"WM_DELETE_WINDOW",
 	};
 
 	for (enum BlueWMAtom atom = 0; atom < BLUE_WM_ATOM_MAX; ++atom) {
@@ -685,6 +696,61 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 	workspace->active->saved_height = window_attr.height;
 }
 
+bool window_supports_delete__BlueWM(Window window)
+{
+	Atom *protocols = NULL;
+	int protocols_count = 0;
+	bool supports_delete = false;
+
+	if (XGetWMProtocols(display, window, &protocols, &protocols_count) == 0) {
+		return false;
+	}
+
+	for (int i = 0; i < protocols_count; ++i) {
+		if (protocols[i] == atoms[BLUE_WM_ATOM_DELETE_WINDOW]) {
+			supports_delete = true;
+
+			break;
+		}
+	}
+
+	if (protocols) {
+		XFree(protocols);
+	}
+
+	return supports_delete;
+}
+
+void close_window__BlueWM(struct BlueWMScreen *screen)
+{
+	const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+
+	if (!workspace->active) {
+		return;
+	}
+
+	Window window = workspace->active->window;
+
+	// The client is only removed from the workspace when the window is
+	// effectively unmapped or destroyed.
+	if (!window_supports_delete__BlueWM(window)) {
+		XKillClient(display, window);
+
+		return;
+	}
+
+	XEvent event = {0};
+
+	event.xclient.type = ClientMessage;
+	event.xclient.window = window;
+	event.xclient.message_type = atoms[BLUE_WM_ATOM_PROTOCOLS];
+	event.xclient.format = 32;
+	event.xclient.data.l[0] = atoms[BLUE_WM_ATOM_DELETE_WINDOW];
+	event.xclient.data.l[1] = CurrentTime;
+
+	XSendEvent(display, window, false, NoEventMask, &event);
+}
+
 void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen)
 {
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
@@ -947,6 +1013,17 @@ void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window)
 	}
 }
 
+void handle_destroy_notify_event__BlueWM(const XEvent *event)
+{
+	// A killed client never unmaps its windows, so the destruction is the only
+	// notification of its removal.
+	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xdestroywindow.event);
+	Window destroyed_window = event->xdestroywindow.window;
+
+	update_active_window_from_workspaces__BlueWM(screen, destroyed_window);
+	remove_client__BlueWM(screen, destroyed_window);
+}
+
 void handle_unmap_notify_event__BlueWM(const XEvent *event)
 {	
 	Window event_window = event->xunmap.event;
@@ -1064,6 +1141,7 @@ void handle_events__BlueWM(void)
 			case EnterNotify:
 			case MapNotify:
 			case UnmapNotify:
+			case DestroyNotify:
 			case MapRequest:
 			case ConfigureRequest:
 				handle_event_functions[event.type](&event);
