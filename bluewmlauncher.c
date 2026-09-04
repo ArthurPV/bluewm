@@ -71,7 +71,24 @@ static void launch_selected_match__BlueWMLauncher(void);
 
 static void handle_key_press_event__BlueWMLauncher(const XEvent *event);
 
-static void handle_events__BlueWMLauncher(void);
+static void handle_focus_out_event__BlueWMLauncher(const XEvent *event);
+
+static void handle_focus_out_event__BlueWMLauncher(const XEvent *event)
+{
+	// The keyboard grab makes the server report a focus change of its own, and
+	// the pointer never gives the focus by itself here.
+	if (event->xfocus.mode == NotifyGrab || event->xfocus.mode == NotifyUngrab) {
+		return;
+	}
+
+	if (event->xfocus.detail == NotifyInferior || event->xfocus.detail == NotifyPointer || event->xfocus.detail == NotifyPointerRoot) {
+		return;
+	}
+
+	is_running = false;
+}
+
+void handle_events__BlueWMLauncher(void);
 
 static void close__BlueWMLauncher(void);
 
@@ -358,6 +375,10 @@ void handle_events__BlueWMLauncher(void)
 				draw__BlueWMLauncher();
 
 				break;
+			case FocusOut:
+				handle_focus_out_event__BlueWMLauncher(&event);
+
+				break;
 			default:
 				break;
 		}
@@ -413,7 +434,7 @@ int main() {
 	XSetFont(display, window_gc, font->fid);
 	fetch_programs__BlueWMLauncher();
 	update_matches__BlueWMLauncher();
-	XSelectInput(display, window, ExposureMask | KeyPressMask | StructureNotifyMask);
+	XSelectInput(display, window, ExposureMask | KeyPressMask | StructureNotifyMask | FocusChangeMask);
 	XMapRaised(display, window);
 
 	// The window is mapped by the WM, and it can only be grabbed once it is
