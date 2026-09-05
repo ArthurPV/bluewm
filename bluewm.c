@@ -189,7 +189,7 @@ static void toggle_workspace_0__BlueWM(struct BlueWMScreen *screen);
 
 static void update_key_state_mask__BlueWM(const XEvent *event);
 
-static bool is_allowed_key_press__BlueWM(const struct BlueWMShortcut *shortcut);
+static bool is_allowed_shortcut__BlueWM(const struct BlueWMShortcut *shortcut);
 
 static void handle_key_press_event__BlueWM(const XEvent *event);
 
@@ -890,7 +890,7 @@ static void update_key_state_mask__BlueWM(const XEvent *event)
 	key_state_mask = mod4 | shift | control;
 }
 
-bool is_allowed_key_press__BlueWM(const struct BlueWMShortcut *shortcut)
+bool is_allowed_shortcut__BlueWM(const struct BlueWMShortcut *shortcut)
 {
 	if (window_to_resize != None) {
 		static void (*allowed_shortcuts[])(struct BlueWMScreen*) = {
@@ -925,7 +925,7 @@ void handle_key_press_event__BlueWM(const XEvent *event)
 	for (size_t i = 0; i < shortcuts_len; ++i) {
 		const struct BlueWMShortcut *shortcut = &shortcuts[i];
 
-		if (key_state_mask == shortcut->state && shortcut->sym == sym && is_allowed_key_press__BlueWM(shortcut)) {
+		if (key_state_mask == shortcut->state && shortcut->sym == sym && is_allowed_shortcut__BlueWM(shortcut)) {
 			assert(shortcut->handler && "Expected to have an handler");
 
 			struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xkey.window);
