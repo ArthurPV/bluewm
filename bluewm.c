@@ -901,16 +901,14 @@ bool is_allowed_shortcut__BlueWM(const struct BlueWMShortcut *shortcut)
 			&resize_window_down__BlueWM
 		};
 		static size_t allowed_shortcuts_len = sizeof(allowed_shortcuts) / sizeof(*allowed_shortcuts);
-		bool found = false;
 
 		for (int i = 0; i < allowed_shortcuts_len; ++i) {
 			if (shortcut->handler == allowed_shortcuts[i]) {
-				found = true;
-				break;
+				return true;
 			}
 		}
 
-		return found;
+		return false;
 	}
 
 	return true;
