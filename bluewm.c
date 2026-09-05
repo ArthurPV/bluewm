@@ -111,38 +111,12 @@ static struct BlueWMScreen *
 find_screen_from_root_window__BlueWM(Window root);
 
 static struct BlueWMClient *
-find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window window)
-{
-	struct BlueWMClient *current = workspace->clients;
+find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window window);
 
-	while (current) {
-		if (current->window == window) {
-			return current;
-		}
+static struct BlueWMClient *
+find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace);
 
-		current = current->next;
-	}
-
-	return NULL;
-}
-
-struct BlueWMClient *
-find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace)
-{
-	struct BlueWMClient *current = workspace->clients;
-
-	while (current) {
-		if (current->is_fullscreen) {
-			return current;
-		}
-
-		current = current->next;
-	}
-
-	return NULL;
-}
-
-enum BlueWMClientRole
+static enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom);
 
 static void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *screen);
@@ -541,6 +515,38 @@ find_screen_from_root_window__BlueWM(Window root)
 	}
 
 	BLUE_LOG_UNREACHABLE("unable to find screen\n");
+}
+
+struct BlueWMClient *
+find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window window)
+{
+	struct BlueWMClient *current = workspace->clients;
+
+	while (current) {
+		if (current->window == window) {
+			return current;
+		}
+
+		current = current->next;
+	}
+
+	return NULL;
+}
+
+struct BlueWMClient *
+find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace)
+{
+	struct BlueWMClient *current = workspace->clients;
+
+	while (current) {
+		if (current->is_fullscreen) {
+			return current;
+		}
+
+		current = current->next;
+	}
+
+	return NULL;
 }
 
 enum BlueWMClientRole
