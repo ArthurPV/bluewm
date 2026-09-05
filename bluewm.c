@@ -159,6 +159,8 @@ static void launch_launcher__BlueWM(struct BlueWMScreen *screen);
 
 static void toggle_resize_window__BlueWM(struct BlueWMScreen *screen);
 
+static void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int height_change);
+
 static void resize_window_left__BlueWM(struct BlueWMScreen *screen);
 
 static void resize_window_right__BlueWM(struct BlueWMScreen *screen);
@@ -650,40 +652,51 @@ update_property:
 	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_RESIZE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window_to_resize, 1);
 }
 
-#define RESIZE_WINDOW_MOTION(width_change, height_change) \
-	if (window_to_resize == None) { \
-		return; \
-	} \
-\
-	XWindowAttributes window_attr; \
-\
-	if (XGetWindowAttributes(display, window_to_resize, &window_attr) == 0) { \
-		BLUE_LOG_ERROR("unable to get window attributes"); \
-	} \
-\
-	XResizeWindow(display, window_to_resize, window_attr.width width_change, window_attr.height height_change);
+void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int height_change)
+{
+	if (window_to_resize == None) {
+		return;
+	}
+
+	XWindowAttributes window_attr;
+
+	if (XGetWindowAttributes(display, window_to_resize, &window_attr) == 0) {
+		BLUE_LOG_ERROR("unable to get window attributes");
+	}
+
+	int new_width;
+	int new_height;
+
+	if (__builtin_add_overflow(window_attr.width, width_change, &new_width) || __builtin_add_overflow(window_attr.height, height_change, &new_height)) {
+		return;
+	}
+
+	if (new_width < 0 || new_height < 0) {
+		return;
+	}
+
+	XResizeWindow(display, window_to_resize, new_width, new_height);
+}
 
 void resize_window_left__BlueWM(struct BlueWMScreen *screen)
 {
-	RESIZE_WINDOW_MOTION(+10, +0);
+	resize_window__BlueWM(screen, +10, +0);
 }
 
 void resize_window_right__BlueWM(struct BlueWMScreen *screen)
 {
-	RESIZE_WINDOW_MOTION(-10, +0);
+	resize_window__BlueWM(screen, -10, +0);
 }
 
 void resize_window_up__BlueWM(struct BlueWMScreen *screen)
 {
-	RESIZE_WINDOW_MOTION(+0, +10);
+	resize_window__BlueWM(screen, +0, +10);
 }
 
 void resize_window_down__BlueWM(struct BlueWMScreen *screen)
 {
-	RESIZE_WINDOW_MOTION(+0, -10);
+	resize_window__BlueWM(screen, +0, -10);
 }
-
-#undef RESIZE_WINDOW_MOTION
 
 void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 {
