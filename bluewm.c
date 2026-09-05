@@ -15,6 +15,8 @@
 #define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
 #define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
 
+struct BlueWMShortcut;
+
 enum BlueWMClientRole {
 	BLUE_WM_CLIENT_ROLE_NONE,
 	BLUE_WM_CLIENT_ROLE_DOCK,
@@ -186,6 +188,8 @@ static inline void toggle_workspace_9__BlueWM(struct BlueWMScreen *screen);
 static void toggle_workspace_0__BlueWM(struct BlueWMScreen *screen);
 
 static void update_key_state_mask__BlueWM(const XEvent *event);
+
+static bool is_allowed_key_press__BlueWM(const struct BlueWMShortcut *shortcut);
 
 static void handle_key_press_event__BlueWM(const XEvent *event);
 
@@ -886,6 +890,32 @@ static void update_key_state_mask__BlueWM(const XEvent *event)
 	key_state_mask = mod4 | shift | control;
 }
 
+bool is_allowed_key_press__BlueWM(const struct BlueWMShortcut *shortcut)
+{
+	if (window_to_resize != None) {
+		static void (*allowed_shortcuts[])(struct BlueWMScreen*) = {
+			&toggle_resize_window__BlueWM,
+			&resize_window_left__BlueWM,
+			&resize_window_right__BlueWM,
+			&resize_window_up__BlueWM,
+			&resize_window_down__BlueWM
+		};
+		static size_t allowed_shortcuts_len = sizeof(allowed_shortcuts) / sizeof(*allowed_shortcuts);
+		bool found = false;
+
+		for (int i = 0; i < allowed_shortcuts_len; ++i) {
+			if (shortcut->handler == allowed_shortcuts[i]) {
+				found = true;
+				break;
+			}
+		}
+
+		return found;
+	}
+
+	return true;
+}
+
 void handle_key_press_event__BlueWM(const XEvent *event)
 {
 	KeySym sym = XLookupKeysym((XKeyEvent*)&event->xkey, 0);
@@ -895,7 +925,7 @@ void handle_key_press_event__BlueWM(const XEvent *event)
 	for (size_t i = 0; i < shortcuts_len; ++i) {
 		const struct BlueWMShortcut *shortcut = &shortcuts[i];
 
-		if (key_state_mask == shortcut->state && shortcut->sym == sym) {
+		if (key_state_mask == shortcut->state && shortcut->sym == sym && is_allowed_key_press__BlueWM(shortcut)) {
 			assert(shortcut->handler && "Expected to have an handler");
 
 			struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xkey.window);
