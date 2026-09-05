@@ -135,13 +135,13 @@ static void toggle_resize_window__BlueWM(struct BlueWMScreen *screen);
 
 static void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int height_change);
 
-static void resize_window_left__BlueWM(struct BlueWMScreen *screen);
+static inline void resize_window_left__BlueWM(struct BlueWMScreen *screen);
 
-static void resize_window_right__BlueWM(struct BlueWMScreen *screen);
+static inline void resize_window_right__BlueWM(struct BlueWMScreen *screen);
 
-static void resize_window_up__BlueWM(struct BlueWMScreen *screen);
+static inline void resize_window_up__BlueWM(struct BlueWMScreen *screen);
 
-static void resize_window_down__BlueWM(struct BlueWMScreen *screen);
+static inline void resize_window_down__BlueWM(struct BlueWMScreen *screen);
 
 static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 
