@@ -11,6 +11,7 @@
 #include <stdarg.h>
 #include <assert.h>
 #include <limits.h>
+#include <string.h>
 
 #include <bluewm.h>
 
@@ -106,6 +107,9 @@ init_decoration__BlueWM(void);
 
 static void
 deinit_decoration__BlueWM(void);
+
+static void
+draw_decoration__BlueWM(const struct BlueWMClient *client);
 
 static void
 launch_startup_program__BlueWM(void);
@@ -246,6 +250,10 @@ static void handle_map_request_event__BlueWM(const XEvent *event);
 
 static void handle_configure_request_event__BlueWM(const XEvent *event);
 
+static void handle_expose_event__BlueWM(const XEvent *event);
+
+static void handle_property_notify_event__BlueWM(const XEvent *event);
+
 static int handle_error__BlueWM(Display *error_display, XErrorEvent *error);
 
 static void handle_events__BlueWM(void);
@@ -263,7 +271,9 @@ static void (*const handle_event_functions[])(const XEvent *) = {
 	[UnmapNotify] = &handle_unmap_notify_event__BlueWM,
 	[DestroyNotify] = &handle_destroy_notify_event__BlueWM,
 	[MapRequest] = &handle_map_request_event__BlueWM,
-	[ConfigureRequest] = &handle_configure_request_event__BlueWM
+	[ConfigureRequest] = &handle_configure_request_event__BlueWM,
+	[Expose] = &handle_expose_event__BlueWM,
+	[PropertyNotify] = &handle_property_notify_event__BlueWM
 };
 static Atom atoms[BLUE_WM_ATOM_MAX] = {0};
 static struct BlueWMWorkspace workspaces[BLUE_WM_WORKSPACE_NUMBER] = {0};
@@ -516,6 +526,54 @@ init_decoration__BlueWM(void)
 	XSetFont(display, decoration_gc, decoration_font->fid);
 }
 
+// The title of a client is drawn by the window manager on the decoration
+// holding it, as the client knows nothing about its own frame.
+void
+draw_decoration__BlueWM(const struct BlueWMClient *client)
+{
+	if (client->decoration == None) {
+		return;
+	}
+
+	XWindowAttributes decoration_attr;
+
+	if (XGetWindowAttributes(display, client->decoration, &decoration_attr) == 0) {
+		return;
+	}
+
+	// The whole title bar is repainted first, so that the previous title is not
+	// left under the new one.
+	XSetForeground(display, decoration_gc, BLUE_WM_DECORATION_COLOR);
+	XFillRectangle(display, client->decoration, decoration_gc, 0, 0, decoration_attr.width, BLUE_WM_DECORATION_TITLE_HEIGHT);
+
+	char *title = NULL;
+
+	XFetchName(display, client->window, &title);
+
+	if (!title) {
+		return;
+	}
+
+	int title_len = strlen(title);
+	int title_max_width = decoration_attr.width - BLUE_WM_DECORATION_EXTRA_WIDTH;
+
+	// A title wider than its decoration is cut, so that it does not run over
+	// the border.
+	while (title_len > 0 && XTextWidth(decoration_font, title, title_len) > title_max_width) {
+		--title_len;
+	}
+
+	if (title_len > 0) {
+		int title_width = XTextWidth(decoration_font, title, title_len);
+
+		XSetForeground(display, decoration_gc, BLUE_WM_DECORATION_TITLE_COLOR);
+		XDrawString(display, client->decoration, decoration_gc, (decoration_attr.width - title_width) / 2,
+				BLUE_WM_DECORATION_TITLE_BASELINE(decoration_font), title, title_len);
+	}
+
+	XFree(title);
+}
+
 void
 deinit_decoration__BlueWM(void)
 {
@@ -741,7 +799,7 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	int window_decoration_width = window_attr.width + BLUE_WM_DECORATION_EXTRA_WIDTH;
 	int window_decoration_height = window_attr.height + BLUE_WM_DECORATION_EXTRA_HEIGHT;
 	Window window_root = RootWindow(display, screen->screen_number);
-	Window window_decoration = XCreateSimpleWindow(display, window_root, window_decoration_x, window_decoration_y, window_decoration_width, window_decoration_height, 0, BLUE_RGB(66, 85, 148), BLUE_RGB(66, 85, 148));
+	Window window_decoration = XCreateSimpleWindow(display, window_root, window_decoration_x, window_decoration_y, window_decoration_width, window_decoration_height, 0, BLUE_WM_DECORATION_COLOR, BLUE_WM_DECORATION_COLOR);
 
 	// A decoration belongs to the window manager, so it must not be redirected
 	// back to it as a client of its own.
@@ -759,7 +817,7 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	//
 	// The enter events are selected as well, so that the border and the title
 	// are not holes in the focus follow the pointer.
-	XSelectInput(display, window_decoration, SubstructureNotifyMask | SubstructureRedirectMask | EnterWindowMask);
+	XSelectInput(display, window_decoration, SubstructureNotifyMask | SubstructureRedirectMask | EnterWindowMask | ExposureMask);
 	XMapWindow(display, window_decoration);
 
 	return window_decoration;
@@ -871,6 +929,9 @@ void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int he
 	}
 
 	XResizeWindow(display, client->window, new_width, new_height);
+	// A shrinking decoration exposes nothing, so its title is drawn again by
+	// hand to stay centered.
+	draw_decoration__BlueWM(client);
 }
 
 void resize_window_left__BlueWM(struct BlueWMScreen *screen)
@@ -913,6 +974,10 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 			XMoveResizeWindow(display, active_window, BLUE_WM_DECORATION_BORDER_SIZE, BLUE_WM_DECORATION_TITLE_HEIGHT,
 					workspace->active->saved_width - BLUE_WM_DECORATION_EXTRA_WIDTH, workspace->active->saved_height - BLUE_WM_DECORATION_EXTRA_HEIGHT);
 		}
+
+		// The client was covering its whole decoration, so the title bar is
+		// uncovered and has to be drawn again.
+		draw_decoration__BlueWM(workspace->active);
 
 		workspace->active->is_fullscreen = false;
 		workspace->active->saved_width = 0;
@@ -1392,7 +1457,7 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 
 	// The enter events are what drives the focus follow the pointer, and they
 	// are only received by selecting them on the client itself.
-	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | EnterWindowMask);
+	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | EnterWindowMask | PropertyChangeMask);
 
 	// The client is taken in charge here, and not on its map notification,
 	// because only the map requests are limited to the windows the window
@@ -1476,6 +1541,35 @@ void handle_configure_request_event__BlueWM(const XEvent *event)
 	// The client keeps its place inside its decoration, so only its size is
 	// taken from the request.
 	XConfigureWindow(display, client->window, CWWidth | CWHeight, &(XWindowChanges){ .width = new_width, .height = new_height });
+	// A shrinking decoration exposes nothing, so its title is drawn again by
+	// hand to stay centered.
+	draw_decoration__BlueWM(client);
+}
+
+void handle_expose_event__BlueWM(const XEvent *event)
+{
+	// Only the decorations are drawn by the window manager, the clients draw
+	// themselves.
+	const struct BlueWMClient *client = find_client_from_workspaces__BlueWM(event->xexpose.window);
+
+	if (client && client->decoration == event->xexpose.window) {
+		draw_decoration__BlueWM(client);
+	}
+}
+
+void handle_property_notify_event__BlueWM(const XEvent *event)
+{
+	// A client renames itself while it runs, so its title has to be drawn
+	// again.
+	if (event->xproperty.atom != XA_WM_NAME) {
+		return;
+	}
+
+	const struct BlueWMClient *client = find_client_from_workspaces__BlueWM(event->xproperty.window);
+
+	if (client) {
+		draw_decoration__BlueWM(client);
+	}
 }
 
 int handle_error__BlueWM(Display *error_display, XErrorEvent *error)
@@ -1539,6 +1633,8 @@ void handle_events__BlueWM(void)
 			case DestroyNotify:
 			case MapRequest:
 			case ConfigureRequest:
+			case Expose:
+			case PropertyNotify:
 				handle_event_functions[event.type](&event);
 
 				break;

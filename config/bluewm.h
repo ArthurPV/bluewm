@@ -52,4 +52,10 @@ static const size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
 #define BLUE_WM_DECORATION_EXTRA_WIDTH (2 * BLUE_WM_DECORATION_BORDER_SIZE)
 #define BLUE_WM_DECORATION_EXTRA_HEIGHT (BLUE_WM_DECORATION_TITLE_HEIGHT + BLUE_WM_DECORATION_BORDER_SIZE)
 
+#define BLUE_WM_DECORATION_COLOR BLUE_RGB(66, 85, 148)
+#define BLUE_WM_DECORATION_TITLE_COLOR BLUE_RGB(255, 255, 255)
+// Baseline of the title, to have it centered on the height of the title bar.
+#define BLUE_WM_DECORATION_TITLE_BASELINE(font) \
+	((BLUE_WM_DECORATION_TITLE_HEIGHT / 2) + ((font)->ascent - ((font)->ascent + (font)->descent) / 2))
+
 #endif // BLUEWM_CONFIG_H
