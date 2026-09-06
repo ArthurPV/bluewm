@@ -363,11 +363,13 @@ int main() {
 	}
 
 	// https://specifications.freedesktop.org/wm/latest/ar01s05.html
+	Atom window_type_atom = XInternAtom(display, "_NET_WM_WINDOW_TYPE", false);
 	Atom dock_atom = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", false);
 
-	if (XSetWMProtocols(display, window, &dock_atom, 1) == 0) {
-		BLUE_LOG_ERROR("cannot set WM_PROTOCOLS\n");
-	}
+	// The role of a window is advertised through _NET_WM_WINDOW_TYPE, and not
+	// through WM_PROTOCOLS, which only carries the protocols the client
+	// understands.
+	XChangeProperty(display, window, window_type_atom, XA_ATOM, 32, PropModeReplace, (unsigned char *)&dock_atom, 1);
 
 	active_window_atom = XInternAtom(display, "_NET_ACTIVE_WINDOW", false);
 	wm_name_atom = XInternAtom(display, "_NET_WM_NAME", false);

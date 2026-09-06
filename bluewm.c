@@ -719,9 +719,13 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	// The client is still unmapped here, so the reparenting does not report an
 	// unmap of its own.
 	XReparentWindow(display, window, window_decoration, BLUE_WM_DECORATION_BORDER_SIZE, BLUE_WM_DECORATION_TITLE_HEIGHT);
-	// The pointer entering the decoration has to focus the client it holds,
-	// otherwise its border and its title would be holes in the focus.
-	XSelectInput(display, window_decoration, EnterWindowMask);
+	// A reparented client is a child of its decoration and no longer of the
+	// root, so the unmap, destroy and configure requests of the client are only
+	// reported to, and redirected by, the decoration.
+	//
+	// The enter events are selected as well, so that the border and the title
+	// are not holes in the focus follow the pointer.
+	XSelectInput(display, window_decoration, SubstructureNotifyMask | SubstructureRedirectMask | EnterWindowMask);
 	XMapWindow(display, window_decoration);
 
 	return window_decoration;
@@ -1336,6 +1340,15 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 	}
 
 	struct BlueWMScreen *screen = find_screen__BlueWM(XScreenNumberOfScreen(window_attr.screen));
+
+	// A client remapping itself is already taken in charge, so it only has to
+	// be mapped back, without being given a second decoration.
+	if (find_client_from_window__BlueWM(&workspaces[screen->workspace], window)) {
+		XMapWindow(display, window);
+
+		return;
+	}
+
 	int new_x = 0;
 	int new_y = 0;
 
