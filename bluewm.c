@@ -127,6 +127,9 @@ static struct BlueWMScreen *
 find_screen_from_root_window__BlueWM(Window root);
 
 static struct BlueWMClient *
+remove_client_from_window__BlueWM(struct BlueWMWorkspace *workspace, Window window);
+
+static struct BlueWMClient *
 find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window window);
 
 static struct BlueWMClient *
@@ -210,7 +213,29 @@ static inline void toggle_workspace_8__BlueWM(struct BlueWMScreen *screen);
 
 static inline void toggle_workspace_9__BlueWM(struct BlueWMScreen *screen);
 
-static void toggle_workspace_0__BlueWM(struct BlueWMScreen *screen);
+static inline void toggle_workspace_0__BlueWM(struct BlueWMScreen *screen);
+
+static void move_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace_num);
+
+static inline void move_workspace_1__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_2__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_3__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_4__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_5__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_6__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_7__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_8__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_9__BlueWM(struct BlueWMScreen *screen);
+
+static inline void move_workspace_0__BlueWM(struct BlueWMScreen *screen);
 
 static void update_key_state_mask__BlueWM(const XEvent *event);
 
@@ -648,6 +673,32 @@ find_screen_from_root_window__BlueWM(Window root)
 	}
 
 	BLUE_LOG_UNREACHABLE("unable to find screen\n");
+}
+
+struct BlueWMClient *
+remove_client_from_window__BlueWM(struct BlueWMWorkspace *workspace, Window window)
+{
+	struct BlueWMClient *previous = NULL;
+	struct BlueWMClient *current = workspace->clients;
+
+	while (current) {
+		if (current->window == window || (current->decoration != None && current->decoration == window)) {
+			if (previous) {
+				previous->next = current->next;
+			} else {
+				workspace->clients = current->next;
+			}
+
+			current->next = NULL;
+
+			return current;
+		}
+
+		previous = current;
+		current = current->next;
+	}
+
+	return NULL;
 }
 
 struct BlueWMClient *
@@ -1148,6 +1199,47 @@ TOGGLE_WORKSPACE_N(0)
 
 #undef TOGGLE_WORKSPACE_N
 
+void move_workspace_n__BlueWM(struct BlueWMScreen *screen, int workspace_num)
+{
+	if (screen->workspace == workspace_num) {
+		return;
+	}
+
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+
+	if (!workspace->active) {
+		return;
+	}
+
+	Window window = workspace->active->window;
+	struct BlueWMClient *moved_client = remove_client_from_window__BlueWM(workspace, window);
+
+	XUnmapWindow(display, get_outer_window__BlueWM(moved_client));
+
+	workspace = &workspaces[workspace_num];
+
+	moved_client->next = workspace->clients;
+	workspace->clients = moved_client;
+}
+
+#define MOVE_WORKSPACE_N(n) \
+void move_workspace_##n##__BlueWM(struct BlueWMScreen *screen) { \
+	move_workspace_n__BlueWM(screen, n); \
+}
+
+MOVE_WORKSPACE_N(1)
+MOVE_WORKSPACE_N(2)
+MOVE_WORKSPACE_N(3)
+MOVE_WORKSPACE_N(4)
+MOVE_WORKSPACE_N(5)
+MOVE_WORKSPACE_N(6)
+MOVE_WORKSPACE_N(7)
+MOVE_WORKSPACE_N(8)
+MOVE_WORKSPACE_N(9)
+MOVE_WORKSPACE_N(0)
+
+#undef MOVE_WORKSPACE_N
+
 static void update_key_state_mask__BlueWM(const XEvent *event)
 {
 	unsigned int mod4 = event->xkey.state & Mod4Mask ? Mod4Mask : None;
@@ -1351,24 +1443,10 @@ void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *scr
 void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window)
 {
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
-	struct BlueWMClient *current = workspace->clients;
-	struct BlueWMClient *previous = NULL;
+	struct BlueWMClient *removed_client = remove_client_from_window__BlueWM(workspace, window);
 
-	while (current) {
-		if (current->window == window) {
-			if (previous) {
-				previous->next = current->next;
-			} else {
-				workspace->clients = current->next;
-			}
-
-			deinit_client__BlueWM(current);
-
-			break;
-		}
-
-		previous = current;
-		current = current->next;
+	if (removed_client) {
+		deinit_client__BlueWM(removed_client);
 	}
 }
 
