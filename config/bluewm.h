@@ -7,8 +7,6 @@ struct BlueWMShortcut {
 	void (*handler)(struct BlueWMScreen*);
 };
 
-#undef BLUE_WM_SHORTCUT
-
 #define BLUE_WM_SHORTCUT(_state, _sym, _handler) ((struct BlueWMShortcut){ .state = _state, .sym = _sym, .handler = _handler })
 
 static const struct BlueWMShortcut shortcuts[] = {
@@ -40,13 +38,18 @@ static const struct BlueWMShortcut shortcuts[] = {
 };
 static const size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
 
-#undef BLUE_WM_MOVE_WINDOW_MASK
-
 // Modifier to hold to move a window with the left button of the mouse.
 #define BLUE_WM_MOVE_WINDOW_MASK Mod4Mask
 
-#undef BLUE_WM_CONFIG_BG_PATH
-
 #define BLUE_WM_CONFIG_BG_PATH "./bg.jpg"
+
+// Space taken by a decoration around its client. The title is on top, the
+// border is on the three other sides.
+#define BLUE_WM_DECORATION_BORDER_SIZE 2
+#define BLUE_WM_DECORATION_TITLE_HEIGHT 12
+// Space taken by a decoration on each axis, to convert a client size into the
+// size of the decoration containing it.
+#define BLUE_WM_DECORATION_EXTRA_WIDTH (2 * BLUE_WM_DECORATION_BORDER_SIZE)
+#define BLUE_WM_DECORATION_EXTRA_HEIGHT (BLUE_WM_DECORATION_TITLE_HEIGHT + BLUE_WM_DECORATION_BORDER_SIZE)
 
 #endif // BLUEWM_CONFIG_H

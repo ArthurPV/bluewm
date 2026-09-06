@@ -17,15 +17,6 @@
 #define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
 #define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
 
-// Space taken by a decoration around its client. The title is on top, the
-// border is on the three other sides.
-#define BLUE_WM_DECORATION_BORDER_SIZE 2
-#define BLUE_WM_DECORATION_TITLE_HEIGHT 4
-// Space taken by a decoration on each axis, to convert a client size into the
-// size of the decoration containing it.
-#define BLUE_WM_DECORATION_EXTRA_WIDTH (2 * BLUE_WM_DECORATION_BORDER_SIZE)
-#define BLUE_WM_DECORATION_EXTRA_HEIGHT (BLUE_WM_DECORATION_TITLE_HEIGHT + BLUE_WM_DECORATION_BORDER_SIZE)
-
 struct BlueWMShortcut;
 
 enum BlueWMClientRole {
