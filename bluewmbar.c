@@ -16,6 +16,8 @@
 
 #define WINDOW_HEIGHT 20
 #define WINDOW_MIDDLE(font) ((WINDOW_HEIGHT / 2) + ((font)->ascent - ((font)->ascent + (font)->descent) / 2))
+// Space kept on the sides of the bar, and between what is drawn on it.
+#define WINDOW_PADDING 3
 
 static Display *display = NULL;
 static Window window = {0};
@@ -32,6 +34,13 @@ static Atom active_window_atom = {0};
 static Atom wm_name_atom = {0};
 static Atom resize_window_atom = {0};
 static Atom active_workspace_atom = {0};
+static Atom xkb_rules_names_atom = {0};
+// The XKB events are numbered from a base the server gives, so their type is
+// only known once the extension is queried.
+static int xkb_event_base = -1;
+// Where the date ends, so that what is drawn after it starts from there and
+// not from a hardcoded place.
+static int date_end_x = 0;
 static bool resizing_window = false;
 static int active_workspace = -1;
 
@@ -77,12 +86,83 @@ void draw_bg__BlueWMBar(void)
 
 const char *get_current_keyboard_layout__BlueWMBar(void)
 {
-	return NULL;
+	static char layout[32] = {0};
+	XkbStateRec keyboard_state;
+
+	if (XkbGetState(display, XkbUseCoreKbd, &keyboard_state) != Success) {
+		return NULL;
+	}
+
+	Atom actual_type;
+	int actual_format;
+	unsigned long nitems_return;
+	unsigned long bytes_after_return;
+	unsigned char *prop_return = NULL;
+	int status = XGetWindowProperty(display, DefaultRootWindow(display), xkb_rules_names_atom, 0, 1024, false, XA_STRING,
+			&actual_type, &actual_format, &nitems_return, &bytes_after_return, &prop_return);
+
+	// The names of the groups are full descriptions, like "English (US)", which
+	// are far too long for the bar, so the short names the layouts were loaded
+	// with are taken instead.
+	if (status != Success || actual_type != XA_STRING || !prop_return) {
+		return NULL;
+	}
+
+	// The property holds the rules, the model, the layouts, the variants and
+	// the options, one after the other, each ended by a nul.
+	const char *names = (const char *)prop_return;
+	unsigned long offset = 0;
+
+	for (int i = 0; i < 2 && offset < nitems_return; ++i) {
+		offset += strlen(names + offset) + 1;
+	}
+
+	if (offset >= nitems_return) {
+		XFree(prop_return);
+
+		return NULL;
+	}
+
+	// The layouts are separated by a comma, and are in the order of the groups.
+	const char *current = names + offset;
+
+	for (int i = 0; i < keyboard_state.group && current; ++i) {
+		const char *comma = strchr(current, ',');
+
+		current = comma ? comma + 1 : NULL;
+	}
+
+	if (!current) {
+		XFree(prop_return);
+
+		return NULL;
+	}
+
+	size_t layout_len = strcspn(current, ",");
+
+	if (layout_len >= sizeof(layout)) {
+		layout_len = sizeof(layout) - 1;
+	}
+
+	memcpy(layout, current, layout_len);
+	layout[layout_len] = '\0';
+	XFree(prop_return);
+
+	return layout_len > 0 ? layout : NULL;
 }
 
 void draw_keyboard_layout__BlueWMBar(void)
 {
-	get_current_keyboard_layout__BlueWMBar();
+	const char *layout = get_current_keyboard_layout__BlueWMBar();
+
+	if (!layout) {
+		return;
+	}
+
+	// The layout comes after the date, so it is drawn from where the date
+	// ended, and the date is drawn before it.
+	XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
+	XDrawString(display, window_pixels, window_gc, date_end_x + 2 * WINDOW_PADDING, WINDOW_MIDDLE(font), layout, strlen(layout));
 }
 
 void draw_date__BlueWMBar(void)
@@ -97,8 +177,12 @@ void draw_date__BlueWMBar(void)
 
 	strftime(date, sizeof(date) - 1, "%Y-%m-%d %T", localtime(&tv.tv_sec));
 
+	size_t date_len = strlen(date);
+
 	XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
-	XDrawString(display, window_pixels, window_gc, 3, WINDOW_MIDDLE(font), date, strlen(date));
+	XDrawString(display, window_pixels, window_gc, WINDOW_PADDING, WINDOW_MIDDLE(font), date, date_len);
+
+	date_end_x = WINDOW_PADDING + XTextWidth(font, date, date_len);
 }
 
 void draw_window_title__BlueWMBar(void)
@@ -146,8 +230,8 @@ void draw_workspaces_number__BlueWMBar(void)
 void draw__BlueWMBar(void)
 {	
 	draw_bg__BlueWMBar();
-	draw_keyboard_layout__BlueWMBar();
 	draw_date__BlueWMBar();
+	draw_keyboard_layout__BlueWMBar();
 	draw_window_title__BlueWMBar();
 	draw_workspaces_number__BlueWMBar();
 	XCopyArea(display, window_pixels, window, window_gc, 0, 0, window_width, window_height, 0, 0);
@@ -296,6 +380,12 @@ void handle_events__BlueWMBar(void)
 
 					break;
 				default:
+					// The state of the keyboard changed, and its group with it,
+					// so the layout on the bar is not the one in use anymore.
+					if (event.type == xkb_event_base) {
+						draw__BlueWMBar();
+					}
+
 					break;
 			}
 		}
@@ -375,10 +465,22 @@ int main() {
 	wm_name_atom = XInternAtom(display, "_NET_WM_NAME", false);
 	resize_window_atom = XInternAtom(display, "_NET_WM_ACTION_RESIZE", false);
 	active_workspace_atom = XInternAtom(display, "_BLUE_WM_ACTIVE_WORKSPACE", false);
+	xkb_rules_names_atom = XInternAtom(display, "_XKB_RULES_NAMES", false);
 
 	fetch_active_workspace__BlueWMBar(window_root);
 
 	set_font__BlueWMBar();
+	// The change of the group of the keyboard is only reported by XKB, so the
+	// bar follows a switch of layout as it happens, and not on its next second.
+	int xkb_major = XkbMajorVersion;
+	int xkb_minor = XkbMinorVersion;
+
+	if (XkbQueryExtension(display, NULL, &xkb_event_base, NULL, &xkb_major, &xkb_minor)) {
+		XkbSelectEventDetails(display, XkbUseCoreKbd, XkbStateNotify, XkbAllStateComponentsMask, XkbGroupStateMask);
+	} else {
+		BLUE_LOG_WARNING("xkb is missing, the keyboard layout will only be refreshed every second\n");
+	}
+
 	XSelectInput(display, window, ExposureMask | FocusChangeMask);
 	XSelectInput(display, window_root, PropertyChangeMask);
 	XMapWindow(display, window);
