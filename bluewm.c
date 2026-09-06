@@ -128,6 +128,9 @@ find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window 
 static struct BlueWMClient *
 find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace);
 
+static struct BlueWMClient *
+find_client_from_workspaces__BlueWM(Window window);
+
 static inline Window
 get_outer_window__BlueWM(const struct BlueWMClient *client);
 
@@ -616,6 +619,22 @@ find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace)
 		}
 
 		current = current->next;
+	}
+
+	return NULL;
+}
+
+// A hidden client keeps asking to be configured, so it is looked for in every
+// workspace and not only in the visible one.
+struct BlueWMClient *
+find_client_from_workspaces__BlueWM(Window window)
+{
+	for (size_t i = 0; i < BLUE_WM_WORKSPACE_NUMBER; ++i) {
+		struct BlueWMClient *client = find_client_from_window__BlueWM(&workspaces[i], window);
+
+		if (client) {
+			return client;
+		}
 	}
 
 	return NULL;
@@ -1393,22 +1412,70 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 
 void handle_configure_request_event__BlueWM(const XEvent *event)
 {
-	XWindowChanges window_changes = {0};
+	const XConfigureRequestEvent *request = &event->xconfigurerequest;
+	XWindowChanges window_changes = {
+		.x = request->x,
+		.y = request->y,
+		.width = request->width,
+		.height = request->height,
+		.border_width = request->border_width,
+		.sibling = request->above,
+		.stack_mode = request->detail
+	};
+	const struct BlueWMClient *client = find_client_from_workspaces__BlueWM(request->window);
 
-    window_changes.x = event->xconfigurerequest.x;
-    window_changes.y = event->xconfigurerequest.y;
-    window_changes.width = event->xconfigurerequest.width;
-    window_changes.height = event->xconfigurerequest.height;
-    window_changes.border_width = event->xconfigurerequest.border_width;
-    window_changes.sibling = event->xconfigurerequest.above;
-    window_changes.stack_mode = event->xconfigurerequest.detail;
+	// A window that is not taken in charge yet, and the dock and the splash,
+	// which are placed by the window manager itself, have no decoration to keep
+	// in step, so the request is only forwarded.
+	if (!client || client->decoration == None) {
+		XConfigureWindow(display, request->window, request->value_mask, &window_changes);
 
-	XConfigureWindow(
-        display,
-        event->xconfigurerequest.window,
-        event->xconfigurerequest.value_mask,
-        &window_changes
-    );
+		return;
+	}
+
+	// A full screen client already covers the whole screen, so it must not put
+	// itself back to its own size.
+	if (client->is_fullscreen) {
+		return;
+	}
+
+	XWindowAttributes window_attr;
+
+	if (XGetWindowAttributes(display, client->window, &window_attr) == 0) {
+		return;
+	}
+
+	// Only the requested fields are honored, the others keep the size the
+	// client already has, as the decoration needs both of them to be resized.
+	int new_width = request->value_mask & CWWidth ? request->width : window_attr.width;
+	int new_height = request->value_mask & CWHeight ? request->height : window_attr.height;
+	XWindowChanges decoration_changes = {
+		.x = request->x,
+		.y = request->y,
+		.width = new_width + BLUE_WM_DECORATION_EXTRA_WIDTH,
+		.height = new_height + BLUE_WM_DECORATION_EXTRA_HEIGHT,
+		.sibling = request->above,
+		.stack_mode = request->detail
+	};
+
+	// A window can only be stacked against one of its own siblings, and the
+	// siblings of a decoration are the other decorations.
+	if (request->value_mask & CWSibling) {
+		const struct BlueWMClient *sibling = find_client_from_workspaces__BlueWM(request->above);
+
+		if (sibling) {
+			decoration_changes.sibling = get_outer_window__BlueWM(sibling);
+		}
+	}
+
+	// The decoration is placed and stacked in the place of its client, and it
+	// is always resized, so that the client is never clipped by its own frame.
+	// The border width is left out, as it only means something for the client.
+	XConfigureWindow(display, client->decoration, (request->value_mask & (CWX | CWY | CWSibling | CWStackMode)) | CWWidth | CWHeight, &decoration_changes);
+
+	// The client keeps its place inside its decoration, so only its size is
+	// taken from the request.
+	XConfigureWindow(display, client->window, CWWidth | CWHeight, &(XWindowChanges){ .width = new_width, .height = new_height });
 }
 
 int handle_error__BlueWM(Display *error_display, XErrorEvent *error)
