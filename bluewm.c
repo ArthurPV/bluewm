@@ -24,6 +24,7 @@ enum BlueWMClientRole {
 	BLUE_WM_CLIENT_ROLE_NONE,
 	BLUE_WM_CLIENT_ROLE_DOCK,
 	BLUE_WM_CLIENT_ROLE_SPLASH,
+	BLUE_WM_CLIENT_ROLE_LAUNCHER,
 };
 
 struct BlueWMClient {
@@ -46,6 +47,7 @@ struct BlueWMScreen {
 	int workspace;
 	struct BlueWMClient *dock;
 	struct BlueWMClient *splash;
+	struct BlueWMClient *launcher;
 };
 
 enum BlueWMLayoutKind {
@@ -67,6 +69,7 @@ struct BlueWMWorkspace {
 enum BlueWMAtom {
 	BLUE_WM_ATOM_DOCK,
 	BLUE_WM_ATOM_SPLASH,
+	BLUE_WM_ATOM_LAUNCHER, // custom
 	BLUE_WM_ATOM_WINDOW_TYPE,
 	BLUE_WM_ATOM_ACTIVE_WINDOW,
 	BLUE_WM_ATOM_RESIZE_WINDOW,
@@ -150,6 +153,8 @@ get_role_of_window__BlueWM(Window window);
 static void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *screen);
 
 static void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen);
+
+static void handle_client_role_launcher__BlueWM(Window window, struct BlueWMScreen *screen);
 
 static void handle_client_role_none__BlueWM(Window window, Window decoration, struct BlueWMScreen *screen);
 
@@ -263,7 +268,9 @@ static void handle_map_notify_event__BlueWM(const XEvent *event);
 
 static void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *screen, Window window);
 
-static void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window);
+static void remove_screen_client__BlueWM(struct BlueWMScreen *screen, Window window);
+
+static void remove_client__BlueWM(struct BlueWMScreen *screen, Window window);
 
 static void handle_unmap_notify_event__BlueWM(const XEvent *event);
 
@@ -359,6 +366,7 @@ static void set_atoms__BlueWM(void)
 	static const char *atom_names[BLUE_WM_ATOM_MAX] = {
 		"_NET_WM_WINDOW_TYPE_DOCK",
 		"_NET_WM_WINDOW_TYPE_SPLASH",
+		"_BLUE_WM_WINDOW_TYPE_LAUNCHER",
 		"_NET_WM_WINDOW_TYPE",
 		"_NET_ACTIVE_WINDOW",
 		"_NET_WM_ACTION_RESIZE",
@@ -763,7 +771,8 @@ get_role_of_atom__BlueWM(const Atom *atom)
 {
 	static enum BlueWMClientRole roles[BLUE_WM_ATOM_MAX] = {
 		[BLUE_WM_ATOM_DOCK] = BLUE_WM_CLIENT_ROLE_DOCK,
-		[BLUE_WM_ATOM_SPLASH] = BLUE_WM_CLIENT_ROLE_SPLASH
+		[BLUE_WM_ATOM_SPLASH] = BLUE_WM_CLIENT_ROLE_SPLASH,
+		[BLUE_WM_ATOM_LAUNCHER] = BLUE_WM_CLIENT_ROLE_LAUNCHER
 	};
 	int atom_index = find_atom__BlueWM(atom);
 
@@ -822,6 +831,15 @@ void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *scree
 void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen)
 {
 	screen->dock = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_DOCK, window, None);
+	XConfigureWindow(display, window, CWStackMode, &(XWindowChanges){ .stack_mode = Above });
+}
+
+void handle_client_role_launcher__BlueWM(Window window, struct BlueWMScreen *screen)
+{
+	screen->launcher = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_LAUNCHER, window, None);
+	// The launcher places itself in the middle of the screen and grabs the
+	// keyboard by itself, so it only has to be left over every other window,
+	// the dock included.
 	XConfigureWindow(display, window, CWStackMode, &(XWindowChanges){ .stack_mode = Above });
 }
 
@@ -885,6 +903,10 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 			break;
 		case BLUE_WM_CLIENT_ROLE_DOCK:
 			handle_client_role_dock__BlueWM(window, screen);
+
+			break;
+		case BLUE_WM_CLIENT_ROLE_LAUNCHER:
+			handle_client_role_launcher__BlueWM(window, screen);
 
 			break;
 		case BLUE_WM_CLIENT_ROLE_NONE: {
@@ -1440,14 +1462,38 @@ void update_active_window_from_workspaces__BlueWM(const struct BlueWMScreen *scr
 	}
 }
 
-void remove_client__BlueWM(const struct BlueWMScreen *screen, Window window)
+// The dock, the splash and the launcher are held by the screen and not by a
+// workspace, so they are removed from it. The launcher is the one that matters,
+// as it is opened and closed again on every search.
+void remove_screen_client__BlueWM(struct BlueWMScreen *screen, Window window)
+{
+	struct BlueWMClient **screen_clients[] = { &screen->dock, &screen->splash, &screen->launcher };
+	static const size_t screen_clients_len = sizeof(screen_clients) / sizeof(*screen_clients);
+
+	for (size_t i = 0; i < screen_clients_len; ++i) {
+		struct BlueWMClient *client = *screen_clients[i];
+
+		if (client && client->window == window) {
+			deinit_client__BlueWM(client);
+			*screen_clients[i] = NULL;
+
+			return;
+		}
+	}
+}
+
+void remove_client__BlueWM(struct BlueWMScreen *screen, Window window)
 {
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 	struct BlueWMClient *removed_client = remove_client_from_window__BlueWM(workspace, window);
 
 	if (removed_client) {
 		deinit_client__BlueWM(removed_client);
+
+		return;
 	}
+
+	remove_screen_client__BlueWM(screen, window);
 }
 
 void handle_destroy_notify_event__BlueWM(const XEvent *event)

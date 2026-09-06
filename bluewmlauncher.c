@@ -431,6 +431,15 @@ int main() {
 		BLUE_LOG_ERROR("cannot set graphics exposures\n");
 	}
 
+	// https://specifications.freedesktop.org/wm/latest/ar01s05.html
+	//
+	// The launcher has no type of its own in the specification, so the window
+	// manager gives it one, to place it over the others and to leave it out of
+	// the workspaces.
+	Atom window_type_atom = XInternAtom(display, "_NET_WM_WINDOW_TYPE", false);
+	Atom launcher_atom = XInternAtom(display, "_BLUE_WM_WINDOW_TYPE_LAUNCHER", false);
+
+	XChangeProperty(display, window, window_type_atom, XA_ATOM, 32, PropModeReplace, (unsigned char *)&launcher_atom, 1);
 	XSetFont(display, window_gc, font->fid);
 	fetch_programs__BlueWMLauncher();
 	update_matches__BlueWMLauncher();
