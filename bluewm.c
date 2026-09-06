@@ -3,6 +3,7 @@
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
 #include <X11/Xproto.h>
+#include <X11/XKBlib.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -180,6 +181,8 @@ static inline void resize_window_down__BlueWM(struct BlueWMScreen *screen);
 
 static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 
+static void toggle_keyboard_layout__BlueWM(struct BlueWMScreen *screen);
+
 static bool window_supports_delete__BlueWM(Window window);
 
 static void close_window__BlueWM(struct BlueWMScreen *screen);
@@ -286,6 +289,8 @@ static void handle_expose_event__BlueWM(const XEvent *event);
 
 static void handle_property_notify_event__BlueWM(const XEvent *event);
 
+static void handle_mapping_notify_event__BlueWM(const XEvent *event);
+
 static int handle_error__BlueWM(Display *error_display, XErrorEvent *error);
 
 static void handle_events__BlueWM(void);
@@ -305,7 +310,8 @@ static void (*const handle_event_functions[])(const XEvent *) = {
 	[MapRequest] = &handle_map_request_event__BlueWM,
 	[ConfigureRequest] = &handle_configure_request_event__BlueWM,
 	[Expose] = &handle_expose_event__BlueWM,
-	[PropertyNotify] = &handle_property_notify_event__BlueWM
+	[PropertyNotify] = &handle_property_notify_event__BlueWM,
+	[MappingNotify] = &handle_mapping_notify_event__BlueWM
 };
 static Atom atoms[BLUE_WM_ATOM_MAX] = {0};
 static struct BlueWMWorkspace workspaces[BLUE_WM_WORKSPACE_NUMBER] = {0};
@@ -622,6 +628,10 @@ launch_startup_program__BlueWM(void)
 
 	// Launch our background
 	launch_builtin_program__BlueWM("./bluewmbg", BLUE_WM_CONFIG_BG_PATH, NULL);
+
+	// The layouts the keyboard shortcut switches between have to be loaded as
+	// the groups of the keyboard first.
+	launch_builtin_program__BlueWM("setxkbmap", "-layout", BLUE_WM_CONFIG_KEYBOARD_LAYOUTS, NULL);
 }
 
 int
@@ -1090,6 +1100,41 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 	workspace->active->saved_height = window_attr.height;
 	workspace->active->saved_x = window_attr.x;
 	workspace->active->saved_y = window_attr.y;
+}
+
+// The layouts are loaded once as the groups of the keyboard, so switching
+// between them is only a matter of locking the next group.
+void toggle_keyboard_layout__BlueWM(struct BlueWMScreen *screen)
+{
+	XkbStateRec keyboard_state;
+
+	if (XkbGetState(display, XkbUseCoreKbd, &keyboard_state) != Success) {
+		return;
+	}
+
+	XkbDescPtr keyboard = XkbGetMap(display, 0, XkbUseCoreKbd);
+
+	if (!keyboard) {
+		return;
+	}
+
+	// The number of loaded layouts is a control of the keyboard, and not
+	// something its state carries.
+	int group_count = 1;
+
+	if (XkbGetControls(display, XkbGroupsWrapMask, keyboard) == Success) {
+		group_count = keyboard->ctrls->num_groups;
+	}
+
+	XkbFreeKeyboard(keyboard, 0, true);
+
+	// A single layout has nothing to be switched to.
+	if (group_count < 2) {
+		return;
+	}
+
+	XkbLockGroup(display, XkbUseCoreKbd, (keyboard_state.group + 1) % group_count);
+	XFlush(display);
 }
 
 bool window_supports_delete__BlueWM(Window window)
@@ -1696,6 +1741,34 @@ void handle_property_notify_event__BlueWM(const XEvent *event)
 	}
 }
 
+void handle_mapping_notify_event__BlueWM(const XEvent *event)
+{
+	XMappingEvent mapping = event->xmapping;
+
+	XRefreshKeyboardMapping(&mapping);
+
+	if (mapping.request != MappingKeyboard && mapping.request != MappingModifier) {
+		return;
+	}
+
+	// A layout has keycodes of its own, so the shortcuts are grabbed again on
+	// the ones they landed on, otherwise they would stay on the keys of the
+	// previous layout.
+	for (struct BlueWMScreen *screen = screens; screen; screen = screen->next) {
+		Window window_root = RootWindow(display, screen->screen_number);
+
+		ungrab_keys__BlueWM(window_root, true);
+		grab_keys__BlueWM(window_root, true);
+
+		// The shortcuts without a modifier are only grabbed while a window is
+		// resized.
+		if (window_to_resize != None) {
+			ungrab_keys__BlueWM(window_root, false);
+			grab_keys__BlueWM(window_root, false);
+		}
+	}
+}
+
 int handle_error__BlueWM(Display *error_display, XErrorEvent *error)
 {
 	// The requests on which a race with a client is expected. Outside of them
@@ -1759,6 +1832,7 @@ void handle_events__BlueWM(void)
 			case ConfigureRequest:
 			case Expose:
 			case PropertyNotify:
+			case MappingNotify:
 				handle_event_functions[event.type](&event);
 
 				break;

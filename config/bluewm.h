@@ -21,6 +21,7 @@ static const struct BlueWMShortcut shortcuts[] = {
 	BLUE_WM_SHORTCUT(None, XK_Up, &resize_window_up__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Down, &resize_window_down__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_f, &toggle_full_screen_window__BlueWM),
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_space, &toggle_keyboard_layout__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK | ShiftMask, XK_q, &close_window__BlueWM),
 
 #define BLUE_WM_SHORTCUT_WORKSPACE(n) \
@@ -58,6 +59,10 @@ static const struct BlueWMShortcut shortcuts[] = {
 static const size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
 
 #define BLUE_WM_CONFIG_BG_PATH "./bg.jpg"
+
+// The keyboard layouts, loaded as the groups of the keyboard, that Mod + Space
+// walks through. They are given to setxkbmap as they are.
+#define BLUE_WM_CONFIG_KEYBOARD_LAYOUTS "us,fr"
 
 // Space taken by a decoration around its client. The title is on top, the
 // border is on the three other sides.
