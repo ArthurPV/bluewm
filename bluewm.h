@@ -46,4 +46,9 @@
 
 #define BLUE_WM_WORKSPACE_NUMBER 10
 
+#undef BLUE_WM_BATTERY_LOW_LEVEL
+
+// Level under which the battery is drawn as low on the bar, in percent.
+#define BLUE_WM_BATTERY_LOW_LEVEL 20
+
 #endif // BLUEWM_H

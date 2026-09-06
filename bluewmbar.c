@@ -11,6 +11,8 @@
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <limits.h>
 
 #include <bluewm.h>
 
@@ -44,6 +46,14 @@ static Atom xkb_rules_names_atom = {0};
 // The XKB events are numbered from a base the server gives, so their type is
 // only known once the extension is queried.
 static int xkb_event_base = -1;
+// The battery the bar reports on, looked for once and kept, as it does not
+// change while the machine runs.
+static char current_battery[NAME_MAX + 1] = {0};
+
+#ifndef POWER_SUPPLY_PATH
+#define POWER_SUPPLY_PATH "/sys/class/power_supply"
+#endif
+
 // Where what is drawn on the left of the bar ends, so that what comes after it
 // starts from there, and the title knows where it has to stop.
 static int left_block_end_x = 0;
@@ -55,6 +65,14 @@ static void draw_bg__BlueWMBar(void);
 static const char *get_current_keyboard_layout__BlueWMBar(void);
 
 static void draw_keyboard_layout__BlueWMBar(void);
+
+static bool read_battery_attribute__BlueWMBar(const char *battery, const char *attribute, char *buffer, size_t buffer_len);
+
+static const char *find_battery__BlueWMBar(void);
+
+static const char *get_battery_status__BlueWMBar(bool *is_low_p);
+
+static void draw_battery__BlueWMBar(void);
 
 static void draw_date__BlueWMBar(void);
 
@@ -176,6 +194,124 @@ void draw_keyboard_layout__BlueWMBar(void)
 	left_block_end_x = layout_x + XTextWidth(font, layout, layout_len);
 }
 
+bool read_battery_attribute__BlueWMBar(const char *battery, const char *attribute, char *buffer, size_t buffer_len)
+{
+	char path[PATH_MAX] = {0};
+
+	snprintf(path, sizeof(path) - 1, POWER_SUPPLY_PATH "/%s/%s", battery, attribute);
+
+	FILE *f = fopen(path, "r");
+
+	if (!f) {
+		return false;
+	}
+
+	bool is_read = fgets(buffer, buffer_len, f) != NULL;
+
+	fclose(f);
+
+	if (!is_read) {
+		return false;
+	}
+
+	// The attributes of a power supply are written with their newline.
+	buffer[strcspn(buffer, "\n")] = '\0';
+
+	return true;
+}
+
+const char *find_battery__BlueWMBar(void)
+{
+	if (current_battery[0] != '\0') {
+		return current_battery;
+	}
+
+	DIR *dir = opendir(POWER_SUPPLY_PATH);
+
+	if (!dir) {
+		return NULL;
+	}
+
+	struct dirent *entry = NULL;
+
+	while ((entry = readdir(dir))) {
+		if (entry->d_name[0] == '.') {
+			continue;
+		}
+
+		char attribute[64] = {0};
+
+		if (!read_battery_attribute__BlueWMBar(entry->d_name, "type", attribute, sizeof(attribute)) || strcmp(attribute, "Battery") != 0) {
+			continue;
+		}
+
+		// A mouse and a keyboard are batteries too, but they are the power
+		// supply of a device and not of the machine, which is what a missing
+		// scope means.
+		if (read_battery_attribute__BlueWMBar(entry->d_name, "scope", attribute, sizeof(attribute)) && strcmp(attribute, "System") != 0) {
+			continue;
+		}
+
+		snprintf(current_battery, sizeof(current_battery), "%s", entry->d_name);
+
+		break;
+	}
+
+	closedir(dir);
+
+	return current_battery[0] == '\0' ? NULL : current_battery;
+}
+
+const char *get_battery_status__BlueWMBar(bool *is_low_p)
+{
+	static char status[16] = {0};
+	const char *battery = find_battery__BlueWMBar();
+
+	if (!battery) {
+		return NULL;
+	}
+
+	char capacity_text[16] = {0};
+	char status_text[32] = {0};
+
+	if (!read_battery_attribute__BlueWMBar(battery, "capacity", capacity_text, sizeof(capacity_text))) {
+		// The battery went away, so it is looked for again on the next draw.
+		current_battery[0] = '\0';
+
+		return NULL;
+	}
+
+	int capacity = atoi(capacity_text);
+	bool is_charging = read_battery_attribute__BlueWMBar(battery, "status", status_text, sizeof(status_text)) && strcmp(status_text, "Discharging") != 0;
+
+	*is_low_p = !is_charging && capacity <= BLUE_WM_BATTERY_LOW_LEVEL;
+
+	// A battery that is filling up is marked, as its level alone does not say
+	// whether it is a worry.
+	snprintf(status, sizeof(status) - 1, "%s%d%%", is_charging ? "+" : "", capacity);
+
+	return status;
+}
+
+void draw_battery__BlueWMBar(void)
+{
+	bool is_low = false;
+	const char *status = get_battery_status__BlueWMBar(&is_low);
+
+	// A machine without a battery has nothing to report.
+	if (!status) {
+		return;
+	}
+
+	size_t status_len = strlen(status);
+	int status_x = left_block_end_x + 2 * WINDOW_PADDING;
+
+	XSetForeground(display, window_gc, is_low ? BLUE_RGB(255, 0, 0) : BLUE_RGB(255, 255, 255));
+	XDrawString(display, window_pixels, window_gc, status_x, WINDOW_MIDDLE(font), status, status_len);
+
+	left_block_end_x = status_x + XTextWidth(font, status, status_len);
+}
+
 void draw_date__BlueWMBar(void)
 {
 	struct timeval tv;
@@ -269,6 +405,7 @@ void draw__BlueWMBar(void)
 	draw_bg__BlueWMBar();
 	draw_date__BlueWMBar();
 	draw_keyboard_layout__BlueWMBar();
+	draw_battery__BlueWMBar();
 	draw_window_title__BlueWMBar();
 	draw_workspaces_number__BlueWMBar();
 	XCopyArea(display, window_pixels, window, window_gc, 0, 0, window_width, window_height, 0, 0);
