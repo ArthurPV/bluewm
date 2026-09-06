@@ -45,7 +45,7 @@ static const size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
 
 // Space taken by a decoration around its client. The title is on top, the
 // border is on the three other sides.
-#define BLUE_WM_DECORATION_BORDER_SIZE 2
+#define BLUE_WM_DECORATION_BORDER_SIZE 5
 #define BLUE_WM_DECORATION_TITLE_HEIGHT 12
 // Space taken by a decoration on each axis, to convert a client size into the
 // size of the decoration containing it.

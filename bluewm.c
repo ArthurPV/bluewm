@@ -741,7 +741,7 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	int window_decoration_width = window_attr.width + BLUE_WM_DECORATION_EXTRA_WIDTH;
 	int window_decoration_height = window_attr.height + BLUE_WM_DECORATION_EXTRA_HEIGHT;
 	Window window_root = RootWindow(display, screen->screen_number);
-	Window window_decoration = XCreateSimpleWindow(display, window_root, window_decoration_x, window_decoration_y, window_decoration_width, window_decoration_height, 0, BLUE_RGB(0, 0, 0), BLUE_RGB(0, 0, 0));
+	Window window_decoration = XCreateSimpleWindow(display, window_root, window_decoration_x, window_decoration_y, window_decoration_width, window_decoration_height, 0, BLUE_RGB(66, 85, 148), BLUE_RGB(66, 85, 148));
 
 	// A decoration belongs to the window manager, so it must not be redirected
 	// back to it as a client of its own.
