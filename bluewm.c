@@ -16,6 +16,15 @@
 #define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
 #define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
 
+// Space taken by a decoration around its client. The title is on top, the
+// border is on the three other sides.
+#define BLUE_WM_DECORATION_BORDER_SIZE 2
+#define BLUE_WM_DECORATION_TITLE_HEIGHT 4
+// Space taken by a decoration on each axis, to convert a client size into the
+// size of the decoration containing it.
+#define BLUE_WM_DECORATION_EXTRA_WIDTH (2 * BLUE_WM_DECORATION_BORDER_SIZE)
+#define BLUE_WM_DECORATION_EXTRA_HEIGHT (BLUE_WM_DECORATION_TITLE_HEIGHT + BLUE_WM_DECORATION_BORDER_SIZE)
+
 struct BlueWMShortcut;
 
 enum BlueWMClientRole {
@@ -126,6 +135,9 @@ find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window 
 
 static struct BlueWMClient *
 find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace);
+
+static inline Window
+get_outer_window__BlueWM(const struct BlueWMClient *client);
 
 static enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom);
@@ -468,6 +480,12 @@ init_client__BlueWM(enum BlueWMClientRole role, Window window, Window decoration
 void
 deinit_client__BlueWM(struct BlueWMClient *client)
 {
+	// A decoration is created by the window manager, so it is not destroyed
+	// with the client it holds.
+	if (client->decoration != None) {
+		XDestroyWindow(display, client->decoration);
+	}
+
 	free(client);
 }
 
@@ -592,6 +610,15 @@ find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace)
 	return NULL;
 }
 
+// A client is placed and stacked through its decoration, which is its parent,
+// so moving or resizing the client alone would only shift it inside its own
+// frame.
+Window
+get_outer_window__BlueWM(const struct BlueWMClient *client)
+{
+	return client->decoration == None ? client->window : client->decoration;
+}
+
 enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom)
 {
@@ -681,8 +708,8 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 
 	int window_decoration_x = window_attr.x;
 	int window_decoration_y = window_attr.y;
-	int window_decoration_width = window_attr.width;
-	int window_decoration_height = window_attr.height;
+	int window_decoration_width = window_attr.width + BLUE_WM_DECORATION_EXTRA_WIDTH;
+	int window_decoration_height = window_attr.height + BLUE_WM_DECORATION_EXTRA_HEIGHT;
 	Window window_root = RootWindow(display, screen->screen_number);
 	Window window_decoration = XCreateSimpleWindow(display, window_root, window_decoration_x, window_decoration_y, window_decoration_width, window_decoration_height, 0, BLUE_RGB(0, 0, 0), BLUE_RGB(0, 0, 0));
 
@@ -691,7 +718,10 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	XChangeWindowAttributes(display, window_decoration, CWOverrideRedirect, &(XSetWindowAttributes){ .override_redirect = true });
 	// The client is still unmapped here, so the reparenting does not report an
 	// unmap of its own.
-	XReparentWindow(display, window, window_decoration, 2, 4);
+	XReparentWindow(display, window, window_decoration, BLUE_WM_DECORATION_BORDER_SIZE, BLUE_WM_DECORATION_TITLE_HEIGHT);
+	// The pointer entering the decoration has to focus the client it holds,
+	// otherwise its border and its title would be holes in the focus.
+	XSelectInput(display, window_decoration, EnterWindowMask);
 	XMapWindow(display, window_decoration);
 
 	return window_decoration;
@@ -773,9 +803,15 @@ void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int he
 		return;
 	}
 
+	const struct BlueWMClient *client = find_client_from_window__BlueWM(&workspaces[screen->workspace], window_to_resize);
+
+	if (!client) {
+		return;
+	}
+
 	XWindowAttributes window_attr;
 
-	if (XGetWindowAttributes(display, window_to_resize, &window_attr) == 0) {
+	if (XGetWindowAttributes(display, client->window, &window_attr) == 0) {
 		BLUE_LOG_ERROR("unable to get window attributes");
 	}
 
@@ -790,7 +826,13 @@ void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int he
 		return;
 	}
 
-	XResizeWindow(display, window_to_resize, new_width, new_height);
+	// The decoration is grown with its client, otherwise the client would be
+	// clipped by the frame it is contained in.
+	if (client->decoration != None) {
+		XResizeWindow(display, client->decoration, new_width + BLUE_WM_DECORATION_EXTRA_WIDTH, new_height + BLUE_WM_DECORATION_EXTRA_HEIGHT);
+	}
+
+	XResizeWindow(display, client->window, new_width, new_height);
 }
 
 void resize_window_left__BlueWM(struct BlueWMScreen *screen)
@@ -822,9 +864,17 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 	}
 
 	Window active_window = workspace->active->window;
+	Window outer_window = get_outer_window__BlueWM(workspace->active);
 
 	if (workspace->active->is_fullscreen) {
-		XMoveResizeWindow(display, active_window, workspace->active->saved_x, workspace->active->saved_y, workspace->active->saved_width, workspace->active->saved_height);
+		// The saved geometry is the one of the decoration, so the client is put
+		// back inside it at its own offset.
+		XMoveResizeWindow(display, outer_window, workspace->active->saved_x, workspace->active->saved_y, workspace->active->saved_width, workspace->active->saved_height);
+
+		if (workspace->active->decoration != None) {
+			XMoveResizeWindow(display, active_window, BLUE_WM_DECORATION_BORDER_SIZE, BLUE_WM_DECORATION_TITLE_HEIGHT,
+					workspace->active->saved_width - BLUE_WM_DECORATION_EXTRA_WIDTH, workspace->active->saved_height - BLUE_WM_DECORATION_EXTRA_HEIGHT);
+		}
 
 		workspace->active->is_fullscreen = false;
 		workspace->active->saved_width = 0;
@@ -842,15 +892,22 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 
 	XWindowAttributes window_attr;
 
-	if (XGetWindowAttributes(display, active_window, &window_attr) == 0) {
+	if (XGetWindowAttributes(display, outer_window, &window_attr) == 0) {
 		BLUE_LOG_ERROR("unable to get window attributes");
 	}
 
 	int screen_width = DisplayWidth(display, screen->screen_number);
 	int screen_height = DisplayHeight(display, screen->screen_number);
 
-	XMoveResizeWindow(display, active_window, 0, 0, screen_width, screen_height);
-	XRaiseWindow(display, active_window);
+	// A full screen client covers its own decoration, so the client fills the
+	// whole frame instead of being inset in it.
+	XMoveResizeWindow(display, outer_window, 0, 0, screen_width, screen_height);
+
+	if (workspace->active->decoration != None) {
+		XMoveResizeWindow(display, active_window, 0, 0, screen_width, screen_height);
+	}
+
+	XRaiseWindow(display, outer_window);
 
 	workspace->active->is_fullscreen = true;
 	workspace->active->saved_width = window_attr.width;
@@ -920,7 +977,9 @@ void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *scree
 	struct BlueWMClient *current = workspace->clients;
 
 	while (current) {
-		XUnmapWindow(display, current->window);
+		// Unmapping the decoration hides the client without unmapping it, so
+		// no unmap of the client is reported and the client is kept.
+		XUnmapWindow(display, get_outer_window__BlueWM(current));
 		current = current->next;
 	}
 }
@@ -931,7 +990,7 @@ void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen)
 	struct BlueWMClient *current = workspace->clients;
 
 	while (current) {
-		XMapWindow(display, current->window);
+		XMapWindow(display, get_outer_window__BlueWM(current));
 		current = current->next;
 	}
 }
@@ -1080,18 +1139,22 @@ void handle_button_press_event__BlueWM(const XEvent *event)
 	// Only a regular client can be moved: the dock and the splash are placed by
 	// the WM itself, and they are the only clients out of the workspaces.
 	struct BlueWMScreen *screen = find_screen_from_root_window__BlueWM(event->xbutton.root);
+	const struct BlueWMClient *client = find_client_from_window__BlueWM(&workspaces[screen->workspace], window);
 
-	if (!find_client_from_window__BlueWM(&workspaces[screen->workspace], window)) {
+	if (!client) {
 		return;
 	}
 
+	// The sub-window of the event is the decoration, as it is the child of the
+	// root, but a client without one is moved directly.
+	Window outer_window = get_outer_window__BlueWM(client);
 	XWindowAttributes window_attr;
 
-	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
+	if (XGetWindowAttributes(display, outer_window, &window_attr) == 0) {
 		return;
 	}
 
-	window_to_move = window;
+	window_to_move = outer_window;
 	window_to_move_offset_x = event->xbutton.x_root - window_attr.x;
 	window_to_move_offset_y = event->xbutton.y_root - window_attr.y;
 
@@ -1127,8 +1190,9 @@ void focus_window__BlueWM(struct BlueWMScreen *screen, Window window)
 
 	workspace->active = client;
 
-	notify_active_window__BlueWM(screen, window);
-	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
+	// The window can be the decoration, but only a client can hold the focus.
+	notify_active_window__BlueWM(screen, client->window);
+	XSetInputFocus(display, client->window, RevertToPointerRoot, CurrentTime);
 }
 
 void handle_enter_notify_event__BlueWM(const XEvent *event)
