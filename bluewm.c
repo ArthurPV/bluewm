@@ -27,6 +27,7 @@ struct BlueWMClient {
 	enum BlueWMClientRole role;
 	int client_state_mask;
 	Window window;
+	Window decoration;
 	struct BlueWMClient *next;
 	int saved_width;
 	int saved_height;
@@ -92,10 +93,16 @@ static inline void
 unset_screens__BlueWM(void);
 
 static struct BlueWMClient *
-init_client__BlueWM(enum BlueWMClientRole role, Window window);
+init_client__BlueWM(enum BlueWMClientRole role, Window window, Window decoration);
 
 static void
 deinit_client__BlueWM(struct BlueWMClient *client);
+
+static void
+init_decoration__BlueWM(void);
+
+static void
+deinit_decoration__BlueWM(void);
 
 static void
 launch_startup_program__BlueWM(void);
@@ -125,7 +132,9 @@ static void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen
 
 static void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen);
 
-static void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen);
+static void handle_client_role_none__BlueWM(Window window, Window decoration, struct BlueWMScreen *screen);
+
+static Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window);
 
 static void new_client__BlueWM(Window window, enum BlueWMClientRole role);
 
@@ -256,6 +265,8 @@ static int window_to_move_offset_x = 0;
 static int window_to_move_offset_y = 0;
 static int key_state_mask = 0;
 static int button_state_mask = 0;
+static GC decoration_gc = {0};
+static XFontStruct *decoration_font = NULL;
 
 void
 launch_builtin_program__BlueWM(const char *cmd, ...)
@@ -437,12 +448,13 @@ unset_screens__BlueWM(void)
 }
 
 struct BlueWMClient *
-init_client__BlueWM(enum BlueWMClientRole role, Window window)
+init_client__BlueWM(enum BlueWMClientRole role, Window window, Window decoration)
 {
 	struct BlueWMClient *client = BLUE_ZERO_ALLOC(sizeof(struct BlueWMClient));
 
 	client->role = role;
 	client->window = window;
+	client->decoration = decoration;
 
 	return client;
 }
@@ -451,6 +463,27 @@ void
 deinit_client__BlueWM(struct BlueWMClient *client)
 {
 	free(client);
+}
+
+void
+init_decoration__BlueWM(void)
+{
+	Window window_root = DefaultRootWindow(display);
+
+	decoration_gc = XCreateGC(display, window_root, 0, NULL);
+
+	if (!(decoration_font = XLoadQueryFont(display, "fixed"))) {
+		BLUE_LOG_ERROR("unable to load font\n");
+	}
+
+	XSetFont(display, decoration_gc, decoration_font->fid);
+}
+
+void
+deinit_decoration__BlueWM(void)
+{
+	XFreeGC(display, decoration_gc);
+	XFreeFont(display, decoration_font);
 }
 
 void
@@ -527,7 +560,7 @@ find_client_from_window__BlueWM(const struct BlueWMWorkspace *workspace, Window 
 	struct BlueWMClient *current = workspace->clients;
 
 	while (current) {
-		if (current->window == window) {
+		if (current->window == window || (current->decoration != None && current->decoration == window)) {
 			return current;
 		}
 
@@ -571,21 +604,21 @@ get_role_of_atom__BlueWM(const Atom *atom)
 
 void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *screen)
 {
-	screen->splash = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_SPLASH, window);
+	screen->splash = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_SPLASH, window, None);
 	XConfigureWindow(display, window, CWStackMode, &(XWindowChanges){ .stack_mode = Below });
 }
 
 void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen)
 {
-	screen->dock = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_DOCK, window);
+	screen->dock = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_DOCK, window, None);
 	XConfigureWindow(display, window, CWStackMode, &(XWindowChanges){ .stack_mode = Above });
 }
 
-void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen)
+void handle_client_role_none__BlueWM(Window window, Window decoration, struct BlueWMScreen *screen)
 {
 	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
 
-	struct BlueWMClient *client = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_NONE, window);
+	struct BlueWMClient *client = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_NONE, window, decoration);
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 
 	client->next = workspace->clients;
@@ -593,6 +626,27 @@ void handle_client_role_none__BlueWM(Window window, struct BlueWMScreen *screen)
 
 	notify_active_window__BlueWM(screen, window);
 	workspace->active = client;
+}
+
+Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
+{
+	XWindowAttributes window_attr;
+
+	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
+		BLUE_LOG_ERROR("unable to get window attributes");
+	}
+
+	int window_decoration_x = window_attr.x;
+	int window_decoration_y = window_attr.y;
+	int window_decoration_width = window_attr.width;
+	int window_decoration_height = window_attr.height;
+	Window window_root = RootWindow(display, screen->screen_number);
+	Window window_decoration = XCreateSimpleWindow(display, window_root, window_decoration_x, window_decoration_y, window_decoration_width, window_decoration_height, 0, BLUE_RGB(0, 0, 0), BLUE_RGB(0, 0, 0));
+
+	XReparentWindow(display, window, window_decoration, 2, 4);
+	XMapWindow(display, window_decoration);
+
+	return window_decoration;
 }
 
 void new_client__BlueWM(Window window, enum BlueWMClientRole role)
@@ -608,10 +662,13 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 			handle_client_role_dock__BlueWM(window, screen);
 
 			break;
-		case BLUE_WM_CLIENT_ROLE_NONE:
-			handle_client_role_none__BlueWM(window, screen);
+		case BLUE_WM_CLIENT_ROLE_NONE: {
+			Window decoration = new_decoration__BlueWM(screen, window);
+
+			handle_client_role_none__BlueWM(window, decoration, screen);
 
 			break;
+		}
 		default:
 			BLUE_LOG_UNREACHABLE("unknown role\n");
 	}
@@ -1039,7 +1096,15 @@ void handle_enter_notify_event__BlueWM(const XEvent *event)
 
 void handle_map_notify_event__BlueWM(const XEvent *event)
 {
+	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xmap.event);
+	const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 	Window window = event->xmap.window;
+	struct BlueWMClient *client = find_client_from_window__BlueWM(workspace, window);
+
+	if (client && client->decoration == window) {
+		return;
+	}
+
 	Atom *window_atoms = NULL;
 	int window_atoms_count = 0;
 	enum BlueWMClientRole window_role = BLUE_WM_CLIENT_ROLE_NONE;
@@ -1058,7 +1123,6 @@ void handle_map_notify_event__BlueWM(const XEvent *event)
 
 	// A new window is mapped over the others, so the full screen window has to
 	// be raised again to stay the only one visible.
-	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xmap.event);
 	const struct BlueWMClient *full_screen_client = find_full_screen_client__BlueWM(&workspaces[screen->workspace]);
 
 	if (full_screen_client && full_screen_client->window != window) {
@@ -1239,6 +1303,7 @@ int main() {
 		BLUE_LOG_ERROR("unable to open display\n");
 	}
 
+	init_decoration__BlueWM();
 	set_atoms__BlueWM();
 	set_screens__BlueWM();
 	set_cursor__BlueWM();
@@ -1246,6 +1311,7 @@ int main() {
 	handle_events__BlueWM();
 	unset_screens__BlueWM();
 	unset_cursor__BlueWM();
+	deinit_decoration__BlueWM();
 
 	XCloseDisplay(display);
 }
