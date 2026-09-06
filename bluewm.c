@@ -16,9 +16,6 @@
 
 #include <bluewm.h>
 
-#define BLUE_WM_CLIENT_STATE_FOCUSED 1 << 0
-#define BLUE_WM_CLIENT_STATE_FULLSCREEN 1 << 1
-
 struct BlueWMShortcut;
 
 enum BlueWMClientRole {
