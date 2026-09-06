@@ -18,6 +18,12 @@
 #define WINDOW_MIDDLE(font) ((WINDOW_HEIGHT / 2) + ((font)->ascent - ((font)->ascent + (font)->descent) / 2))
 // Space kept on the sides of the bar, and between what is drawn on it.
 #define WINDOW_PADDING 3
+// Space taken by the number of a workspace, as a factor of the height of the
+// font.
+#define WINDOW_WORKSPACE_SPACE_FACTOR 2
+// Where the numbers of the workspaces start, which is also where everything
+// drawn before them has to stop.
+#define WINDOW_WORKSPACES_X(font) ((int)window_width - WINDOW_WORKSPACE_SPACE_FACTOR * (font)->ascent * BLUE_WM_WORKSPACE_NUMBER)
 
 static Display *display = NULL;
 static Window window = {0};
@@ -38,9 +44,9 @@ static Atom xkb_rules_names_atom = {0};
 // The XKB events are numbered from a base the server gives, so their type is
 // only known once the extension is queried.
 static int xkb_event_base = -1;
-// Where the date ends, so that what is drawn after it starts from there and
-// not from a hardcoded place.
-static int date_end_x = 0;
+// Where what is drawn on the left of the bar ends, so that what comes after it
+// starts from there, and the title knows where it has to stop.
+static int left_block_end_x = 0;
 static bool resizing_window = false;
 static int active_workspace = -1;
 
@@ -161,8 +167,13 @@ void draw_keyboard_layout__BlueWMBar(void)
 
 	// The layout comes after the date, so it is drawn from where the date
 	// ended, and the date is drawn before it.
+	size_t layout_len = strlen(layout);
+	int layout_x = left_block_end_x + 2 * WINDOW_PADDING;
+
 	XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
-	XDrawString(display, window_pixels, window_gc, date_end_x + 2 * WINDOW_PADDING, WINDOW_MIDDLE(font), layout, strlen(layout));
+	XDrawString(display, window_pixels, window_gc, layout_x, WINDOW_MIDDLE(font), layout, layout_len);
+
+	left_block_end_x = layout_x + XTextWidth(font, layout, layout_len);
 }
 
 void draw_date__BlueWMBar(void)
@@ -182,7 +193,7 @@ void draw_date__BlueWMBar(void)
 	XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
 	XDrawString(display, window_pixels, window_gc, WINDOW_PADDING, WINDOW_MIDDLE(font), date, date_len);
 
-	date_end_x = WINDOW_PADDING + XTextWidth(font, date, date_len);
+	left_block_end_x = WINDOW_PADDING + XTextWidth(font, date, date_len);
 }
 
 void draw_window_title__BlueWMBar(void)
@@ -197,11 +208,41 @@ void draw_window_title__BlueWMBar(void)
 		XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
 	}
 
-	// The title is centered on its width in pixels, not on its number of
-	// characters.
-	int title_width = XTextWidth(font, current_window_title, current_window_title_len);
+	// The title has the bar to itself only between what is drawn on its left,
+	// the date and the layout, and the numbers of the workspaces on its right.
+	int title_min_x = left_block_end_x + 2 * WINDOW_PADDING;
+	int title_max_x = WINDOW_WORKSPACES_X(font) - 2 * WINDOW_PADDING;
+	int title_max_width = title_max_x - title_min_x;
 
-	XDrawString(display, window_pixels, window_gc, (window_width - title_width) / 2, WINDOW_MIDDLE(font), current_window_title, current_window_title_len);
+	if (title_max_width <= 0) {
+		return;
+	}
+
+	// A title too long for that space is cut, so that it never runs over its
+	// neighbours.
+	size_t title_len = current_window_title_len;
+
+	while (title_len > 0 && XTextWidth(font, current_window_title, title_len) > title_max_width) {
+		--title_len;
+	}
+
+	if (title_len == 0) {
+		return;
+	}
+
+	// The title is centered on its width in pixels, not on its number of
+	// characters, and it is kept centered on the whole bar as long as it fits
+	// there.
+	int title_width = XTextWidth(font, current_window_title, title_len);
+	int title_x = ((int)window_width - title_width) / 2;
+
+	if (title_x < title_min_x) {
+		title_x = title_min_x;
+	} else if (title_x + title_width > title_max_x) {
+		title_x = title_max_x - title_width;
+	}
+
+	XDrawString(display, window_pixels, window_gc, title_x, WINDOW_MIDDLE(font), current_window_title, title_len);
 }
 
 void draw_workspaces_number__BlueWMBar(void)
@@ -219,11 +260,7 @@ void draw_workspaces_number__BlueWMBar(void)
 			XSetForeground(display, window_gc, BLUE_RGB(255, 255, 255));
 		}
 
-#define SPACE_FACTOR 2
-
-		XDrawString(display, window_pixels, window_gc, window_width - SPACE_FACTOR * font->ascent * (BLUE_WM_WORKSPACE_NUMBER - i), WINDOW_MIDDLE(font), number, strlen(number));
-
-#undef SPACE_FACTOR
+		XDrawString(display, window_pixels, window_gc, WINDOW_WORKSPACES_X(font) + WINDOW_WORKSPACE_SPACE_FACTOR * font->ascent * i, WINDOW_MIDDLE(font), number, strlen(number));
 	}
 }
 
