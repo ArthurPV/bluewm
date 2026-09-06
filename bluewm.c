@@ -2,6 +2,7 @@
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
+#include <X11/Xproto.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -251,6 +252,8 @@ static void handle_map_request_event__BlueWM(const XEvent *event);
 
 static void handle_configure_request_event__BlueWM(const XEvent *event);
 
+static int handle_error__BlueWM(Display *error_display, XErrorEvent *error);
+
 static void handle_events__BlueWM(void);
 
 #include <config/bluewm.h>
@@ -483,6 +486,15 @@ deinit_client__BlueWM(struct BlueWMClient *client)
 	// A decoration is created by the window manager, so it is not destroyed
 	// with the client it holds.
 	if (client->decoration != None) {
+		XWindowAttributes decoration_attr;
+
+		// Destroying a decoration destroys the client it contains, and a client
+		// leaving a workspace can be only unmapped, and not gone, so it is put
+		// back on the root first, where it was taken from.
+		if (XGetWindowAttributes(display, client->decoration, &decoration_attr)) {
+			XReparentWindow(display, client->window, decoration_attr.root, decoration_attr.x, decoration_attr.y);
+		}
+
 		XDestroyWindow(display, client->decoration);
 	}
 
@@ -553,13 +565,14 @@ get_screen_from_window__BlueWM(Window window)
 {
 	XWindowAttributes window_attr;
 
+	// An unmap or a destroy is only known once the client has done it, so the
+	// window can already be gone here, and the default screen is then the only
+	// answer left.
 	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get window attributes");
+		return find_screen__BlueWM(DefaultScreen(display));
 	}
 
-	long screen_number = XScreenNumberOfScreen(window_attr.screen);
-
-	return find_screen__BlueWM(screen_number);
+	return find_screen__BlueWM(XScreenNumberOfScreen(window_attr.screen));
 }
 
 struct BlueWMScreen *
@@ -703,7 +716,7 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	XWindowAttributes window_attr;
 
 	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get window attributes");
+		return None;
 	}
 
 	int window_decoration_x = window_attr.x;
@@ -776,7 +789,7 @@ void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
 		XWindowAttributes attr;
 
 		if (XGetWindowAttributes(display, window_to_resize, &attr) == 0) {
-			BLUE_LOG_ERROR("unable to get window attributes");
+			goto out;
 		}
 
 		if (attr.map_state == IsUnmapped) {
@@ -816,7 +829,7 @@ void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int he
 	XWindowAttributes window_attr;
 
 	if (XGetWindowAttributes(display, client->window, &window_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get window attributes");
+		return;
 	}
 
 	int new_width;
@@ -897,7 +910,7 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 	XWindowAttributes window_attr;
 
 	if (XGetWindowAttributes(display, outer_window, &window_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get window attributes");
+		return;
 	}
 
 	int screen_width = DisplayWidth(display, screen->screen_number);
@@ -1308,7 +1321,7 @@ bool window_is_on_dock__BlueWM(const struct BlueWMScreen *screen, const XWindowA
 	XWindowAttributes dock_attr;
 
 	if (XGetWindowAttributes(display, screen->dock->window, &dock_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get dock attributes\n");
+		return false;
 	}
 
 	// Two rectangles only overlap if they overlap on both axes.
@@ -1336,7 +1349,7 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 	XWindowAttributes window_attr;
 
 	if (XGetWindowAttributes(display, window, &window_attr) == 0) {
-		BLUE_LOG_ERROR("unable to get window attributes\n");
+		return;
 	}
 
 	struct BlueWMScreen *screen = find_screen__BlueWM(XScreenNumberOfScreen(window_attr.screen));
@@ -1396,6 +1409,29 @@ void handle_configure_request_event__BlueWM(const XEvent *event)
     );
 }
 
+int handle_error__BlueWM(Display *error_display, XErrorEvent *error)
+{
+	// A client can be gone between the moment a request is sent and the moment
+	// the server handles it, so a request on a window that no longer exists is
+	// expected, and it must not stop the window manager.
+	bool is_expected = error->error_code == BadWindow ||
+		error->error_code == BadDrawable ||
+		// A window that is no longer viewable cannot take the focus, nor be
+		// stacked against a sibling it has lost.
+		(error->error_code == BadMatch && (error->request_code == X_SetInputFocus || error->request_code == X_ConfigureWindow));
+
+	if (is_expected) {
+		return 0;
+	}
+
+	char error_text[256] = {0};
+
+	XGetErrorText(error_display, error->error_code, error_text, sizeof(error_text));
+	BLUE_LOG_WARNING("request %d failed: %s\n", error->request_code, error_text);
+
+	return 0;
+}
+
 void handle_events__BlueWM(void)
 {
 	XEvent event;
@@ -1429,6 +1465,7 @@ int main() {
 		BLUE_LOG_ERROR("unable to open display\n");
 	}
 
+	XSetErrorHandler(&handle_error__BlueWM);
 	init_decoration__BlueWM();
 	set_atoms__BlueWM();
 	set_screens__BlueWM();
