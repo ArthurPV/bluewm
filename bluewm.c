@@ -278,6 +278,9 @@ static Display *display = NULL;
 static struct BlueWMScreen *screens = NULL;
 static bool is_running = true;
 static Window window_to_resize = None;
+// The handler Xlib installed, kept to stay fatal on the errors that are
+// not expected.
+static int (*default_handle_error__BlueWM)(Display *, XErrorEvent *) = NULL;
 static Window window_to_move = None;
 // Distance between the pointer and the origin of `window_to_move`, to keep the
 // window under the same point of the pointer during the whole move.
@@ -487,6 +490,10 @@ deinit_client__BlueWM(struct BlueWMClient *client)
 	// with the client it holds.
 	if (client->decoration != None) {
 		XWindowAttributes decoration_attr;
+
+		// The client is put back on the root by the window manager itself, so
+		// the server does not have to do it in its place anymore.
+		XRemoveFromSaveSet(display, client->window);
 
 		// Destroying a decoration destroys the client it contains, and a client
 		// leaving a workspace can be only unmapped, and not gone, so it is put
@@ -729,6 +736,10 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	// A decoration belongs to the window manager, so it must not be redirected
 	// back to it as a client of its own.
 	XChangeWindowAttributes(display, window_decoration, CWOverrideRedirect, &(XSetWindowAttributes){ .override_redirect = true });
+	// Destroying a decoration destroys the client it contains, so the client is
+	// added to the save set: the server puts it back on the root by itself if
+	// the window manager dies, instead of taking it down with the decoration.
+	XAddToSaveSet(display, window);
 	// The client is still unmapped here, so the reparenting does not report an
 	// unmap of its own.
 	XReparentWindow(display, window, window_decoration, BLUE_WM_DECORATION_BORDER_SIZE, BLUE_WM_DECORATION_TITLE_HEIGHT);
@@ -1411,25 +1422,44 @@ void handle_configure_request_event__BlueWM(const XEvent *event)
 
 int handle_error__BlueWM(Display *error_display, XErrorEvent *error)
 {
-	// A client can be gone between the moment a request is sent and the moment
-	// the server handles it, so a request on a window that no longer exists is
-	// expected, and it must not stop the window manager.
-	bool is_expected = error->error_code == BadWindow ||
-		error->error_code == BadDrawable ||
+	// The requests on which a race with a client is expected. Outside of them
+	// the same error is a mistake of the window manager, so it is not ignored.
+	static const struct {
+		unsigned char request_code;
+		unsigned char error_code;
+	} expected_errors[] = {
 		// A window that is no longer viewable cannot take the focus, nor be
 		// stacked against a sibling it has lost.
-		(error->error_code == BadMatch && (error->request_code == X_SetInputFocus || error->request_code == X_ConfigureWindow));
+		{ X_SetInputFocus, BadMatch },
+		{ X_ConfigureWindow, BadMatch },
+		// A decoration is drawn on an expose, which can be handled once the
+		// decoration is already destroyed.
+		{ X_PolyText8, BadDrawable },
+		{ X_PolyFillRectangle, BadDrawable },
+		{ X_PolySegment, BadDrawable },
+		{ X_CopyArea, BadDrawable },
+		// Another client can already hold the grab of a shortcut.
+		{ X_GrabButton, BadAccess },
+		{ X_GrabKey, BadAccess }
+	};
+	static const size_t expected_errors_len = sizeof(expected_errors) / sizeof(*expected_errors);
 
-	if (is_expected) {
+	// A client can be gone between the moment a request is sent and the moment
+	// the server handles it, so a request on a window that no longer exists is
+	// expected whatever the request is.
+	if (error->error_code == BadWindow) {
 		return 0;
 	}
 
-	char error_text[256] = {0};
+	for (size_t i = 0; i < expected_errors_len; ++i) {
+		if (error->request_code == expected_errors[i].request_code && error->error_code == expected_errors[i].error_code) {
+			return 0;
+		}
+	}
 
-	XGetErrorText(error_display, error->error_code, error_text, sizeof(error_text));
-	BLUE_LOG_WARNING("request %d failed: %s\n", error->request_code, error_text);
-
-	return 0;
+	// An unexpected error is a mistake of the window manager itself, and it is
+	// left fatal so that it is not hidden.
+	return default_handle_error__BlueWM(error_display, error);
 }
 
 void handle_events__BlueWM(void)
@@ -1465,7 +1495,7 @@ int main() {
 		BLUE_LOG_ERROR("unable to open display\n");
 	}
 
-	XSetErrorHandler(&handle_error__BlueWM);
+	default_handle_error__BlueWM = XSetErrorHandler(&handle_error__BlueWM);
 	init_decoration__BlueWM();
 	set_atoms__BlueWM();
 	set_screens__BlueWM();
