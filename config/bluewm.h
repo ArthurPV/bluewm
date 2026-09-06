@@ -9,19 +9,22 @@ struct BlueWMShortcut {
 
 #define BLUE_WM_SHORTCUT(_state, _sym, _handler) ((struct BlueWMShortcut){ .state = _state, .sym = _sym, .handler = _handler })
 
+// Modifier to hold to move a window with the left button of the mouse.
+#define BLUE_WM_MOVE_WINDOW_MASK Mod4Mask
+
 static const struct BlueWMShortcut shortcuts[] = {
-	BLUE_WM_SHORTCUT(Mod4Mask, XK_Return, &launch_terminal__BlueWM),
-	BLUE_WM_SHORTCUT(Mod4Mask, XK_r, &toggle_resize_window__BlueWM),
-	BLUE_WM_SHORTCUT(Mod4Mask, XK_d, &launch_launcher__BlueWM),
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_Return, &launch_terminal__BlueWM),
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_r, &toggle_resize_window__BlueWM),
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_d, &launch_launcher__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Left, &resize_window_left__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Right, &resize_window_right__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Up, &resize_window_up__BlueWM),
 	BLUE_WM_SHORTCUT(None, XK_Down, &resize_window_down__BlueWM),
-	BLUE_WM_SHORTCUT(Mod4Mask, XK_f, &toggle_full_screen_window__BlueWM),
-	BLUE_WM_SHORTCUT(Mod4Mask | ShiftMask, XK_q, &close_window__BlueWM),
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_f, &toggle_full_screen_window__BlueWM),
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK | ShiftMask, XK_q, &close_window__BlueWM),
 
 #define BLUE_WM_SHORTCUT_WORKSPACE(n) \
-	BLUE_WM_SHORTCUT(Mod4Mask, XK_##n, &toggle_workspace_##n##__BlueWM)
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_##n, &toggle_workspace_##n##__BlueWM)
 
 	BLUE_WM_SHORTCUT_WORKSPACE(1),
 	BLUE_WM_SHORTCUT_WORKSPACE(2),
@@ -37,9 +40,6 @@ static const struct BlueWMShortcut shortcuts[] = {
 #undef BLUE_WM_SHORTCUT_WORKSPACE
 };
 static const size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
-
-// Modifier to hold to move a window with the left button of the mouse.
-#define BLUE_WM_MOVE_WINDOW_MASK Mod4Mask
 
 #define BLUE_WM_CONFIG_BG_PATH "./bg.jpg"
 
