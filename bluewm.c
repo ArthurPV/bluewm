@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <assert.h>
+#include <limits.h>
 
 #include <bluewm.h>
 
@@ -64,6 +65,7 @@ struct BlueWMWorkspace {
 enum BlueWMAtom {
 	BLUE_WM_ATOM_DOCK,
 	BLUE_WM_ATOM_SPLASH,
+	BLUE_WM_ATOM_WINDOW_TYPE,
 	BLUE_WM_ATOM_ACTIVE_WINDOW,
 	BLUE_WM_ATOM_RESIZE_WINDOW,
 	BLUE_WM_ATOM_ACTIVE_WORKSPACE, // custom
@@ -127,6 +129,9 @@ find_full_screen_client__BlueWM(const struct BlueWMWorkspace *workspace);
 
 static enum BlueWMClientRole
 get_role_of_atom__BlueWM(const Atom *atom);
+
+static enum BlueWMClientRole
+get_role_of_window__BlueWM(Window window);
 
 static void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *screen);
 
@@ -307,6 +312,7 @@ static void set_atoms__BlueWM(void)
 	static const char *atom_names[BLUE_WM_ATOM_MAX] = {
 		"_NET_WM_WINDOW_TYPE_DOCK",
 		"_NET_WM_WINDOW_TYPE_SPLASH",
+		"_NET_WM_WINDOW_TYPE",
 		"_NET_ACTIVE_WINDOW",
 		"_NET_WM_ACTION_RESIZE",
 		"_BLUE_WM_ACTIVE_WORKSPACE",
@@ -602,6 +608,45 @@ get_role_of_atom__BlueWM(const Atom *atom)
 	return roles[atom_index];
 }
 
+enum BlueWMClientRole
+get_role_of_window__BlueWM(Window window)
+{
+	Atom property_type = None;
+	int property_format = 0;
+	unsigned long property_count = 0;
+	unsigned long property_bytes_after = 0;
+	unsigned char *property = NULL;
+
+	// The role is advertised through _NET_WM_WINDOW_TYPE, not through
+	// WM_PROTOCOLS, which only carries the protocols the client understands.
+	if (XGetWindowProperty(display, window, atoms[BLUE_WM_ATOM_WINDOW_TYPE], 0, LONG_MAX, false, XA_ATOM,
+			&property_type, &property_format, &property_count, &property_bytes_after, &property) != Success) {
+		return BLUE_WM_CLIENT_ROLE_NONE;
+	}
+
+	enum BlueWMClientRole role = BLUE_WM_CLIENT_ROLE_NONE;
+
+	if (property_type == XA_ATOM && property_format == 32) {
+		const Atom *window_types = (const Atom *)property;
+
+		// _NET_WM_WINDOW_TYPE is ordered by decreasing preference, so the
+		// first recognized type is the one to honor.
+		for (unsigned long i = 0; i < property_count; ++i) {
+			role = get_role_of_atom__BlueWM(&window_types[i]);
+
+			if (role != BLUE_WM_CLIENT_ROLE_NONE) {
+				break;
+			}
+		}
+	}
+
+	if (property) {
+		XFree(property);
+	}
+
+	return role;
+}
+
 void handle_client_role_splash__BlueWM(Window window, struct BlueWMScreen *screen)
 {
 	screen->splash = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_SPLASH, window, None);
@@ -616,8 +661,6 @@ void handle_client_role_dock__BlueWM(Window window, struct BlueWMScreen *screen)
 
 void handle_client_role_none__BlueWM(Window window, Window decoration, struct BlueWMScreen *screen)
 {
-	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
-
 	struct BlueWMClient *client = init_client__BlueWM(BLUE_WM_CLIENT_ROLE_NONE, window, decoration);
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 
@@ -643,6 +686,11 @@ Window new_decoration__BlueWM(const struct BlueWMScreen *screen, Window window)
 	Window window_root = RootWindow(display, screen->screen_number);
 	Window window_decoration = XCreateSimpleWindow(display, window_root, window_decoration_x, window_decoration_y, window_decoration_width, window_decoration_height, 0, BLUE_RGB(0, 0, 0), BLUE_RGB(0, 0, 0));
 
+	// A decoration belongs to the window manager, so it must not be redirected
+	// back to it as a client of its own.
+	XChangeWindowAttributes(display, window_decoration, CWOverrideRedirect, &(XSetWindowAttributes){ .override_redirect = true });
+	// The client is still unmapped here, so the reparenting does not report an
+	// unmap of its own.
 	XReparentWindow(display, window, window_decoration, 2, 4);
 	XMapWindow(display, window_decoration);
 
@@ -1096,37 +1144,24 @@ void handle_enter_notify_event__BlueWM(const XEvent *event)
 
 void handle_map_notify_event__BlueWM(const XEvent *event)
 {
-	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xmap.event);
-	const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 	Window window = event->xmap.window;
-	struct BlueWMClient *client = find_client_from_window__BlueWM(workspace, window);
 
-	if (client && client->decoration == window) {
+	// A client is taken in charge on its map request, before it is mapped, so
+	// the only windows left here are the ones the window manager does not
+	// manage, the decorations included.
+	if (event->xmap.override_redirect) {
 		return;
-	}
-
-	Atom *window_atoms = NULL;
-	int window_atoms_count = 0;
-	enum BlueWMClientRole window_role = BLUE_WM_CLIENT_ROLE_NONE;
-
-	XGetWMProtocols(display, window, &window_atoms, &window_atoms_count);
-
-	for (int i = 0; i < window_atoms_count; ++i) {
-		window_role = get_role_of_atom__BlueWM(&window_atoms[i]);
-	}
-
-	new_client__BlueWM(window, window_role);
-
-	if (window_atoms) {
-		XFree(window_atoms);
 	}
 
 	// A new window is mapped over the others, so the full screen window has to
 	// be raised again to stay the only one visible.
+	struct BlueWMScreen *screen = get_screen_from_window__BlueWM(event->xmap.event);
 	const struct BlueWMClient *full_screen_client = find_full_screen_client__BlueWM(&workspaces[screen->workspace]);
 
 	if (full_screen_client && full_screen_client->window != window) {
-		XRaiseWindow(display, full_screen_client->window);
+		// The decoration is the parent of the client, so raising the client
+		// alone would leave it behind its own frame.
+		XRaiseWindow(display, full_screen_client->decoration != None ? full_screen_client->decoration : full_screen_client->window);
 		// The new window is hidden behind, so it must not keep the focus.
 		focus_window__BlueWM(screen, full_screen_client->window);
 	}
@@ -1247,7 +1282,21 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 	// The enter events are what drives the focus follow the pointer, and they
 	// are only received by selecting them on the client itself.
 	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | EnterWindowMask);
+
+	// The client is taken in charge here, and not on its map notification,
+	// because only the map requests are limited to the windows the window
+	// manager has to manage, and because the reparenting into a decoration has
+	// to happen while the client is still unmapped.
+	enum BlueWMClientRole window_role = get_role_of_window__BlueWM(window);
+
+	new_client__BlueWM(window, window_role);
 	XMapWindow(display, window);
+
+	// The focus is only given once the client is viewable, as an unviewable
+	// window cannot hold it.
+	if (window_role == BLUE_WM_CLIENT_ROLE_NONE) {
+		XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
+	}
 }
 
 void handle_configure_request_event__BlueWM(const XEvent *event)
