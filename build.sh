@@ -4,7 +4,7 @@ set -e
 
 FLAGS="-Wall -std=c99 -lX11 -I ."
 
-gcc bluewm.c -o bluewm $FLAGS
+gcc bluewm.c -o bluewm $FLAGS -lasound
 gcc bluewmbar.c -o bluewmbar $FLAGS -lasound
 gcc bluewmbg.c -o bluewmbg -lspng -ljpeg $FLAGS
 gcc bluewmlauncher.c -o bluewmlauncher $FLAGS

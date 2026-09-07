@@ -4,6 +4,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xproto.h>
 #include <X11/XKBlib.h>
+#include <X11/XF86keysym.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -13,6 +14,8 @@
 #include <assert.h>
 #include <limits.h>
 #include <string.h>
+#include <alloca.h>
+#include <alsa/asoundlib.h>
 
 #include <bluewm.h>
 
@@ -180,6 +183,18 @@ static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 
 static void toggle_keyboard_layout__BlueWM(struct BlueWMScreen *screen);
 
+static snd_mixer_elem_t *find_volume_element__BlueWM(void);
+
+static void change_volume__BlueWM(struct BlueWMScreen *screen, int change);
+
+static inline void raise_volume__BlueWM(struct BlueWMScreen *screen);
+
+static inline void lower_volume__BlueWM(struct BlueWMScreen *screen);
+
+static void toggle_mute__BlueWM(struct BlueWMScreen *screen);
+
+static void close_volume__BlueWM(void);
+
 static bool window_supports_delete__BlueWM(Window window);
 
 static void close_window__BlueWM(struct BlueWMScreen *screen);
@@ -188,9 +203,9 @@ static void unmap_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen
 
 static void map_all_windows_from_current_workspace__BlueWM(struct BlueWMScreen *screen);
 
-static void grab_keys__BlueWM(Window window_root, bool with_modifier);
+static void grab_keys__BlueWM(Window window_root, bool is_always_active);
 
-static void ungrab_keys__BlueWM(Window window_root, bool with_modifier);
+static void ungrab_keys__BlueWM(Window window_root, bool is_always_active);
 
 static void grab_buttons__BlueWM(Window window_root);
 
@@ -320,6 +335,20 @@ static Window window_to_resize = None;
 // The handler Xlib installed, kept to stay fatal on the errors that are
 // not expected.
 static int (*default_handle_error__BlueWM)(Display *, XErrorEvent *) = NULL;
+// The mixer is opened once and kept, as opening and loading it on every change
+// of volume would be wasteful.
+static snd_mixer_t *volume_mixer = NULL;
+static snd_mixer_elem_t *volume_element = NULL;
+// A mixer that cannot be opened is not tried again.
+static bool volume_is_unavailable = false;
+
+#ifndef VOLUME_MIXER_DEVICE
+#define VOLUME_MIXER_DEVICE "default"
+#endif
+
+#ifndef VOLUME_MIXER_ELEMENT
+#define VOLUME_MIXER_ELEMENT "Master"
+#endif
 static Window window_to_move = None;
 // Distance between the pointer and the origin of `window_to_move`, to keep the
 // window under the same point of the pointer during the whole move.
@@ -414,12 +443,12 @@ static const unsigned int lock_masks[] = {
 static const size_t lock_masks_len = sizeof(lock_masks) / sizeof(lock_masks[0]);
 
 void
-grab_keys__BlueWM(Window window_root, bool with_modifier)
+grab_keys__BlueWM(Window window_root, bool is_always_active)
 {
 	for (size_t i = 0; i < shortcuts_len; ++i) {
 		const struct BlueWMShortcut *shortcut = &shortcuts[i];
 
-		if ((shortcut->state != None) != with_modifier) {
+		if (shortcut->is_resize == is_always_active) {
 			continue;
 		}
 
@@ -436,12 +465,12 @@ grab_keys__BlueWM(Window window_root, bool with_modifier)
 }
 
 void
-ungrab_keys__BlueWM(Window window_root, bool with_modifier)
+ungrab_keys__BlueWM(Window window_root, bool is_always_active)
 {
 	for (size_t i = 0; i < shortcuts_len; ++i) {
 		const struct BlueWMShortcut *shortcut = &shortcuts[i];
 
-		if ((shortcut->state != None) != with_modifier) {
+		if (shortcut->is_resize == is_always_active) {
 			continue;
 		}
 
@@ -1134,6 +1163,134 @@ void toggle_keyboard_layout__BlueWM(struct BlueWMScreen *screen)
 	XFlush(display);
 }
 
+// ALSA reports its errors on the standard error of the process, which is the
+// log of the window manager, so it is kept quiet.
+static void handle_alsa_error__BlueWM(const char *file, int line, const char *function, int err, const char *format, ...)
+{
+	(void)file;
+	(void)line;
+	(void)function;
+	(void)err;
+	(void)format;
+}
+
+snd_mixer_elem_t *find_volume_element__BlueWM(void)
+{
+	if (volume_element) {
+		return volume_element;
+	}
+
+	if (volume_is_unavailable) {
+		return NULL;
+	}
+
+	if (!volume_mixer) {
+		snd_lib_error_set_handler(&handle_alsa_error__BlueWM);
+
+		if (snd_mixer_open(&volume_mixer, 0) < 0) {
+			volume_mixer = NULL;
+			volume_is_unavailable = true;
+
+			return NULL;
+		}
+
+		// The default device is the one the sound server puts in front of the
+		// hardware, so it carries the volume the user actually changes.
+		if (snd_mixer_attach(volume_mixer, VOLUME_MIXER_DEVICE) < 0
+				|| snd_mixer_selem_register(volume_mixer, NULL, NULL) < 0
+				|| snd_mixer_load(volume_mixer) < 0) {
+			snd_mixer_close(volume_mixer);
+			volume_mixer = NULL;
+			volume_is_unavailable = true;
+
+			return NULL;
+		}
+	}
+
+	snd_mixer_selem_id_t *id = NULL;
+
+	snd_mixer_selem_id_alloca(&id);
+	snd_mixer_selem_id_set_index(id, 0);
+	snd_mixer_selem_id_set_name(id, VOLUME_MIXER_ELEMENT);
+
+	volume_element = snd_mixer_find_selem(volume_mixer, id);
+
+	return volume_element;
+}
+
+void change_volume__BlueWM(struct BlueWMScreen *screen, int change)
+{
+	snd_mixer_elem_t *element = find_volume_element__BlueWM();
+
+	if (!element) {
+		return;
+	}
+
+	// The mixer keeps what it was loaded with, so it is refreshed to start from
+	// the volume of now and not from the one of its loading.
+	snd_mixer_handle_events(volume_mixer);
+
+	long min = 0;
+	long max = 0;
+	long value = 0;
+
+	if (snd_mixer_selem_get_playback_volume_range(element, &min, &max) < 0
+			|| snd_mixer_selem_get_playback_volume(element, SND_MIXER_SCHN_FRONT_LEFT, &value) < 0
+			|| max <= min) {
+		return;
+	}
+
+	// The level is rounded and not truncated, so that a volume of 40 is raised
+	// to 45 and not to 44.
+	long level = ((value - min) * 100 + (max - min) / 2) / (max - min) + change;
+
+	if (level < 0) {
+		level = 0;
+	} else if (level > 100) {
+		level = 100;
+	}
+
+	snd_mixer_selem_set_playback_volume_all(element, min + (level * (max - min) + 50) / 100);
+}
+
+inline void raise_volume__BlueWM(struct BlueWMScreen *screen)
+{
+	change_volume__BlueWM(screen, BLUE_WM_CONFIG_VOLUME_STEP);
+}
+
+inline void lower_volume__BlueWM(struct BlueWMScreen *screen)
+{
+	change_volume__BlueWM(screen, -BLUE_WM_CONFIG_VOLUME_STEP);
+}
+
+void toggle_mute__BlueWM(struct BlueWMScreen *screen)
+{
+	snd_mixer_elem_t *element = find_volume_element__BlueWM();
+
+	if (!element || !snd_mixer_selem_has_playback_switch(element)) {
+		return;
+	}
+
+	snd_mixer_handle_events(volume_mixer);
+
+	int is_unmuted = 1;
+
+	if (snd_mixer_selem_get_playback_switch(element, SND_MIXER_SCHN_FRONT_LEFT, &is_unmuted) < 0) {
+		return;
+	}
+
+	snd_mixer_selem_set_playback_switch_all(element, !is_unmuted);
+}
+
+void close_volume__BlueWM(void)
+{
+	if (volume_mixer) {
+		snd_mixer_close(volume_mixer);
+		volume_mixer = NULL;
+		volume_element = NULL;
+	}
+}
+
 bool window_supports_delete__BlueWM(Window window)
 {
 	Atom *protocols = NULL;
@@ -1321,7 +1478,10 @@ bool is_allowed_shortcut__BlueWM(const struct BlueWMShortcut *shortcut)
 			&resize_window_left__BlueWM,
 			&resize_window_right__BlueWM,
 			&resize_window_up__BlueWM,
-			&resize_window_down__BlueWM
+			&resize_window_down__BlueWM,
+			&raise_volume__BlueWM,
+			&lower_volume__BlueWM,
+			&toggle_mute__BlueWM
 		};
 		static size_t allowed_shortcuts_len = sizeof(allowed_shortcuts) / sizeof(*allowed_shortcuts);
 
@@ -1851,6 +2011,7 @@ int main() {
 	set_cursor__BlueWM();
 	launch_startup_program__BlueWM();
 	handle_events__BlueWM();
+	close_volume__BlueWM();
 	unset_screens__BlueWM();
 	unset_cursor__BlueWM();
 	deinit_decoration__BlueWM();

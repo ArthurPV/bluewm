@@ -643,7 +643,7 @@ const char *get_volume_status__BlueWMBar(bool *is_muted_p)
 	// reported as 39.
 	long level = ((value - min) * 100 + (max - min) / 2) / (max - min);
 
-	snprintf(status, sizeof(status) - 1, *is_muted_p ? "mute" : "vol: %ld%%", level);
+	snprintf(status, sizeof(status) - 1, *is_muted_p ? "vol: mute" : "vol: %ld%%", level);
 
 	return status;
 }

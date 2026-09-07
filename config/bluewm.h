@@ -5,9 +5,14 @@ struct BlueWMShortcut {
 	unsigned int state;
 	KeySym sym;
 	void (*handler)(struct BlueWMScreen*);
+	// A shortcut of the resize mode is only grabbed while a window is resized,
+	// as it has no modifier and would be stolen from every client otherwise.
+	bool is_resize;
 };
 
 #define BLUE_WM_SHORTCUT(_state, _sym, _handler) ((struct BlueWMShortcut){ .state = _state, .sym = _sym, .handler = _handler })
+
+#define BLUE_WM_SHORTCUT_RESIZE(_sym, _handler) ((struct BlueWMShortcut){ .state = None, .sym = _sym, .handler = _handler, .is_resize = true })
 
 // Modifier to hold to move a window with the left button of the mouse.
 #define BLUE_WM_MOVE_WINDOW_MASK Mod4Mask
@@ -16,12 +21,16 @@ static const struct BlueWMShortcut shortcuts[] = {
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_Return, &launch_terminal__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_r, &toggle_resize_window__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_d, &launch_launcher__BlueWM),
-	BLUE_WM_SHORTCUT(None, XK_Left, &resize_window_left__BlueWM),
-	BLUE_WM_SHORTCUT(None, XK_Right, &resize_window_right__BlueWM),
-	BLUE_WM_SHORTCUT(None, XK_Up, &resize_window_up__BlueWM),
-	BLUE_WM_SHORTCUT(None, XK_Down, &resize_window_down__BlueWM),
+	BLUE_WM_SHORTCUT_RESIZE(XK_Left, &resize_window_left__BlueWM),
+	BLUE_WM_SHORTCUT_RESIZE(XK_Right, &resize_window_right__BlueWM),
+	BLUE_WM_SHORTCUT_RESIZE(XK_Up, &resize_window_up__BlueWM),
+	BLUE_WM_SHORTCUT_RESIZE(XK_Down, &resize_window_down__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_f, &toggle_full_screen_window__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_space, &toggle_keyboard_layout__BlueWM),
+	// The media keys of the keyboard carry no modifier of their own.
+	BLUE_WM_SHORTCUT(None, XF86XK_AudioRaiseVolume, &raise_volume__BlueWM),
+	BLUE_WM_SHORTCUT(None, XF86XK_AudioLowerVolume, &lower_volume__BlueWM),
+	BLUE_WM_SHORTCUT(None, XF86XK_AudioMute, &toggle_mute__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK | ShiftMask, XK_q, &close_window__BlueWM),
 
 #define BLUE_WM_SHORTCUT_WORKSPACE(n) \
@@ -63,6 +72,9 @@ static const size_t shortcuts_len = sizeof(shortcuts) / sizeof(shortcuts[0]);
 // The keyboard layouts, loaded as the groups of the keyboard, that Mod + Space
 // walks through. They are given to setxkbmap as they are.
 #define BLUE_WM_CONFIG_KEYBOARD_LAYOUTS "us,fr"
+
+// Step of a change of volume, in percent.
+#define BLUE_WM_CONFIG_VOLUME_STEP 5
 
 // Space taken by a decoration around its client. The title is on top, the
 // border is on the three other sides.
