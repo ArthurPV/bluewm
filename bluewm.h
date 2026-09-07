@@ -51,4 +51,15 @@
 // Level under which the battery is drawn as low on the bar, in percent.
 #define BLUE_WM_BATTERY_LOW_LEVEL 20
 
+#undef BLUE_WM_WIFI_LOW_LEVEL
+
+// Signal under which the wifi is drawn as low on the bar, in percent.
+#define BLUE_WM_WIFI_LOW_LEVEL 30
+
+#undef BLUE_WM_WIFI_SSID_MAX_LEN
+
+// A network can be named with up to 32 characters, so the name is cut to this
+// length to leave room for the title of the window.
+#define BLUE_WM_WIFI_SSID_MAX_LEN 16
+
 #endif // BLUEWM_H

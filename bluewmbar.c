@@ -13,6 +13,9 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <limits.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <linux/wireless.h>
 
 #include <bluewm.h>
 
@@ -50,9 +53,25 @@ static int xkb_event_base = -1;
 // change while the machine runs.
 static char current_battery[NAME_MAX + 1] = {0};
 
+// The wireless interface the bar reports on, looked for once and kept, like the
+// battery.
+static char current_wifi_interface[IFNAMSIZ + 1] = {0};
+
 #ifndef POWER_SUPPLY_PATH
 #define POWER_SUPPLY_PATH "/sys/class/power_supply"
 #endif
+
+#ifndef NET_CLASS_PATH
+#define NET_CLASS_PATH "/sys/class/net"
+#endif
+
+#ifndef PROC_NET_WIRELESS_PATH
+#define PROC_NET_WIRELESS_PATH "/proc/net/wireless"
+#endif
+
+// The link quality of /proc/net/wireless is given out of a maximum the driver
+// reports, which is this one on every driver in practice.
+#define WIFI_QUALITY_MAX 70
 
 // Where what is drawn on the left of the bar ends, so that what comes after it
 // starts from there, and the title knows where it has to stop.
@@ -66,6 +85,8 @@ static const char *get_current_keyboard_layout__BlueWMBar(void);
 
 static void draw_keyboard_layout__BlueWMBar(void);
 
+static bool read_file_line__BlueWMBar(const char *path, char *buffer, size_t buffer_len);
+
 static bool read_battery_attribute__BlueWMBar(const char *battery, const char *attribute, char *buffer, size_t buffer_len);
 
 static const char *find_battery__BlueWMBar(void);
@@ -73,6 +94,16 @@ static const char *find_battery__BlueWMBar(void);
 static const char *get_battery_status__BlueWMBar(bool *is_low_p);
 
 static void draw_battery__BlueWMBar(void);
+
+static const char *find_wifi_interface__BlueWMBar(void);
+
+static bool get_wifi_quality__BlueWMBar(const char *interface, int *quality_p);
+
+static bool get_wifi_ssid__BlueWMBar(const char *interface, char *ssid, size_t ssid_len);
+
+static const char *get_wifi_status__BlueWMBar(bool *is_low_p);
+
+static void draw_wifi__BlueWMBar(void);
 
 static void draw_date__BlueWMBar(void);
 
@@ -194,12 +225,8 @@ void draw_keyboard_layout__BlueWMBar(void)
 	left_block_end_x = layout_x + XTextWidth(font, layout, layout_len);
 }
 
-bool read_battery_attribute__BlueWMBar(const char *battery, const char *attribute, char *buffer, size_t buffer_len)
+bool read_file_line__BlueWMBar(const char *path, char *buffer, size_t buffer_len)
 {
-	char path[PATH_MAX] = {0};
-
-	snprintf(path, sizeof(path) - 1, POWER_SUPPLY_PATH "/%s/%s", battery, attribute);
-
 	FILE *f = fopen(path, "r");
 
 	if (!f) {
@@ -214,10 +241,19 @@ bool read_battery_attribute__BlueWMBar(const char *battery, const char *attribut
 		return false;
 	}
 
-	// The attributes of a power supply are written with their newline.
+	// The attributes of the kernel are written with their newline.
 	buffer[strcspn(buffer, "\n")] = '\0';
 
 	return true;
+}
+
+bool read_battery_attribute__BlueWMBar(const char *battery, const char *attribute, char *buffer, size_t buffer_len)
+{
+	char path[PATH_MAX] = {0};
+
+	snprintf(path, sizeof(path) - 1, POWER_SUPPLY_PATH "/%s/%s", battery, attribute);
+
+	return read_file_line__BlueWMBar(path, buffer, buffer_len);
 }
 
 const char *find_battery__BlueWMBar(void)
@@ -299,6 +335,180 @@ void draw_battery__BlueWMBar(void)
 	const char *status = get_battery_status__BlueWMBar(&is_low);
 
 	// A machine without a battery has nothing to report.
+	if (!status) {
+		return;
+	}
+
+	size_t status_len = strlen(status);
+	int status_x = left_block_end_x + 2 * WINDOW_PADDING;
+
+	XSetForeground(display, window_gc, is_low ? BLUE_RGB(255, 0, 0) : BLUE_RGB(255, 255, 255));
+	XDrawString(display, window_pixels, window_gc, status_x, WINDOW_MIDDLE(font), status, status_len);
+
+	left_block_end_x = status_x + XTextWidth(font, status, status_len);
+}
+
+const char *find_wifi_interface__BlueWMBar(void)
+{
+	if (current_wifi_interface[0] != '\0') {
+		return current_wifi_interface;
+	}
+
+	DIR *dir = opendir(NET_CLASS_PATH);
+
+	if (!dir) {
+		return NULL;
+	}
+
+	struct dirent *entry = NULL;
+
+	while ((entry = readdir(dir))) {
+		if (entry->d_name[0] == '.') {
+			continue;
+		}
+
+		// Only a wireless interface is given a wireless directory by the
+		// kernel, which tells it apart from the wired ones and the bridges.
+		char path[PATH_MAX] = {0};
+
+		snprintf(path, sizeof(path) - 1, NET_CLASS_PATH "/%s/wireless", entry->d_name);
+
+		DIR *wireless_dir = opendir(path);
+
+		if (!wireless_dir) {
+			continue;
+		}
+
+		closedir(wireless_dir);
+		snprintf(current_wifi_interface, sizeof(current_wifi_interface), "%.*s", IFNAMSIZ, entry->d_name);
+
+		break;
+	}
+
+	closedir(dir);
+
+	return current_wifi_interface[0] == '\0' ? NULL : current_wifi_interface;
+}
+
+bool get_wifi_quality__BlueWMBar(const char *interface, int *quality_p)
+{
+	FILE *f = fopen(PROC_NET_WIRELESS_PATH, "r");
+
+	if (!f) {
+		return false;
+	}
+
+	char line[256] = {0};
+	bool is_found = false;
+
+	// The two first lines are the header of the table.
+	if (fgets(line, sizeof(line), f) && fgets(line, sizeof(line), f)) {
+		while (fgets(line, sizeof(line), f)) {
+			char name[IFNAMSIZ + 1] = {0};
+			unsigned int status = 0;
+			int quality = 0;
+
+			// The quality is written with a trailing dot, as the kernel prints
+			// it as a fixed point number.
+			if (sscanf(line, " %16[^:]: %x %d.", name, &status, &quality) != 3 || strcmp(name, interface) != 0) {
+				continue;
+			}
+
+			*quality_p = quality;
+			is_found = true;
+
+			break;
+		}
+	}
+
+	fclose(f);
+
+	return is_found;
+}
+
+bool get_wifi_ssid__BlueWMBar(const char *interface, char *ssid, size_t ssid_len)
+{
+	// The wireless extensions are deprecated, but the kernel still answers them
+	// for the drivers of today, and they need no library where netlink would.
+	struct iwreq request = {0};
+
+	snprintf(request.ifr_name, IFNAMSIZ, "%s", interface);
+	request.u.essid.pointer = ssid;
+	request.u.essid.length = ssid_len;
+
+	int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if (socket_fd < 0) {
+		return false;
+	}
+
+	bool is_read = ioctl(socket_fd, SIOCGIWESSID, &request) == 0;
+
+	close(socket_fd);
+
+	return is_read && ssid[0] != '\0';
+}
+
+const char *get_wifi_status__BlueWMBar(bool *is_low_p)
+{
+	static char status[BLUE_WM_WIFI_SSID_MAX_LEN + 16] = {0};
+	const char *interface = find_wifi_interface__BlueWMBar();
+
+	if (!interface) {
+		return NULL;
+	}
+
+	char path[PATH_MAX] = {0};
+	char operstate[16] = {0};
+
+	snprintf(path, sizeof(path) - 1, NET_CLASS_PATH "/%s/operstate", interface);
+
+	if (!read_file_line__BlueWMBar(path, operstate, sizeof(operstate))) {
+		// The interface went away, so it is looked for again on the next draw.
+		current_wifi_interface[0] = '\0';
+
+		return NULL;
+	}
+
+	// An interface that is not up is not connected to anything.
+	if (strcmp(operstate, "up") != 0) {
+		return NULL;
+	}
+
+	int quality = 0;
+
+	if (!get_wifi_quality__BlueWMBar(interface, &quality)) {
+		return NULL;
+	}
+
+	int level = quality * 100 / WIFI_QUALITY_MAX;
+
+	if (level > 100) {
+		level = 100;
+	}
+
+	*is_low_p = level <= BLUE_WM_WIFI_LOW_LEVEL;
+
+	char ssid[IW_ESSID_MAX_SIZE + 1] = {0};
+
+	// A network can be named with up to 32 characters, which would take the
+	// room of the title, so it is cut.
+	if (get_wifi_ssid__BlueWMBar(interface, ssid, sizeof(ssid))) {
+		snprintf(status, sizeof(status) - 1, "%.*s %d%%", BLUE_WM_WIFI_SSID_MAX_LEN, ssid, level);
+	} else {
+		snprintf(status, sizeof(status) - 1, "%d%%", level);
+	}
+
+	return status;
+}
+
+void draw_wifi__BlueWMBar(void)
+{
+	bool is_low = false;
+	const char *status = get_wifi_status__BlueWMBar(&is_low);
+
+	// A machine without a wireless interface, or one that is down, has nothing
+	// to report.
 	if (!status) {
 		return;
 	}
@@ -406,6 +616,7 @@ void draw__BlueWMBar(void)
 	draw_date__BlueWMBar();
 	draw_keyboard_layout__BlueWMBar();
 	draw_battery__BlueWMBar();
+	draw_wifi__BlueWMBar();
 	draw_window_title__BlueWMBar();
 	draw_workspaces_number__BlueWMBar();
 	XCopyArea(display, window_pixels, window, window_gc, 0, 0, window_width, window_height, 0, 0);
