@@ -349,7 +349,7 @@ const char *get_battery_status__BlueWMBar(bool *is_low_p)
 
 	// A battery that is filling up is marked, as its level alone does not say
 	// whether it is a worry.
-	snprintf(status, sizeof(status) - 1, "%s%d%%", is_charging ? "+" : "", capacity);
+	snprintf(status, sizeof(status) - 1, "%s %s%d%%", battery, is_charging ? "+" : "", capacity);
 
 	return status;
 }
