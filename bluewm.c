@@ -649,11 +649,15 @@ deinit_decoration__BlueWM(void)
 void
 launch_startup_program__BlueWM(void)
 {
+	// The programs are looked for in the PATH, and not next to the working
+	// directory, as a session is started from the home of the user and not from
+	// where the window manager was built.
+	//
 	// Launch our status bar
-	launch_builtin_program__BlueWM("./bluewmbar", NULL);
+	launch_builtin_program__BlueWM("bluewmbar", NULL);
 
 	// Launch our background
-	launch_builtin_program__BlueWM("./bluewmbg", BLUE_WM_CONFIG_BG_PATH, NULL);
+	launch_builtin_program__BlueWM("bluewmbg", BLUE_WM_CONFIG_BG_PATH, NULL);
 
 	// The layouts the keyboard shortcut switches between have to be loaded as
 	// the groups of the keyboard first.
@@ -964,7 +968,7 @@ void launch_terminal__BlueWM(struct BlueWMScreen *screen)
 
 void launch_launcher__BlueWM(struct BlueWMScreen *screen)
 {
-	launch_builtin_program__BlueWM("./bluewmlauncher", NULL);
+	launch_builtin_program__BlueWM("bluewmlauncher", NULL);
 }
 
 void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
