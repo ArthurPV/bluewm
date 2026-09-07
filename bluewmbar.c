@@ -166,7 +166,7 @@ void draw_bg__BlueWMBar(void)
 
 const char *get_current_keyboard_layout__BlueWMBar(void)
 {
-	static char layout[32] = {0};
+	char layout[32] = {0};
 	XkbStateRec keyboard_state;
 
 	if (XkbGetState(display, XkbUseCoreKbd, &keyboard_state) != Success) {
@@ -228,7 +228,11 @@ const char *get_current_keyboard_layout__BlueWMBar(void)
 	layout[layout_len] = '\0';
 	XFree(prop_return);
 
-	return layout_len > 0 ? layout : NULL;
+	static char res[64] = {0};
+
+	snprintf(res, sizeof(res) - 1, "lay: %s", layout);
+
+	return layout_len > 0 ? res : NULL;
 }
 
 void draw_keyboard_layout__BlueWMBar(void)
@@ -349,7 +353,7 @@ const char *get_battery_status__BlueWMBar(bool *is_low_p)
 
 	// A battery that is filling up is marked, as its level alone does not say
 	// whether it is a worry.
-	snprintf(status, sizeof(status) - 1, "%s %s%d%%", battery, is_charging ? "+" : "", capacity);
+	snprintf(status, sizeof(status) - 1, "bat: %s%d%%", is_charging ? "+" : "", capacity);
 
 	return status;
 }
@@ -476,7 +480,7 @@ bool get_wifi_ssid__BlueWMBar(const char *interface, char *ssid, size_t ssid_len
 
 const char *get_wifi_status__BlueWMBar(bool *is_low_p)
 {
-	static char status[BLUE_WM_WIFI_SSID_MAX_LEN + 16] = {0};
+	static char status[BLUE_WM_WIFI_SSID_MAX_LEN + 32] = {0};
 	const char *interface = find_wifi_interface__BlueWMBar();
 
 	if (!interface) {
@@ -519,9 +523,9 @@ const char *get_wifi_status__BlueWMBar(bool *is_low_p)
 	// A network can be named with up to 32 characters, which would take the
 	// room of the title, so it is cut.
 	if (get_wifi_ssid__BlueWMBar(interface, ssid, sizeof(ssid))) {
-		snprintf(status, sizeof(status) - 1, "%.*s %d%%", BLUE_WM_WIFI_SSID_MAX_LEN, ssid, level);
+		snprintf(status, sizeof(status) - 1, "net: %.*s %d%%", BLUE_WM_WIFI_SSID_MAX_LEN, ssid, level);
 	} else {
-		snprintf(status, sizeof(status) - 1, "%d%%", level);
+		snprintf(status, sizeof(status) - 1, "net: %d%%", level);
 	}
 
 	return status;
@@ -639,7 +643,7 @@ const char *get_volume_status__BlueWMBar(bool *is_muted_p)
 	// reported as 39.
 	long level = ((value - min) * 100 + (max - min) / 2) / (max - min);
 
-	snprintf(status, sizeof(status) - 1, *is_muted_p ? "mute" : "vol %ld%%", level);
+	snprintf(status, sizeof(status) - 1, *is_muted_p ? "mute" : "vol: %ld%%", level);
 
 	return status;
 }
