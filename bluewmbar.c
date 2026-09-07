@@ -16,6 +16,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <linux/wireless.h>
+#include <alsa/asoundlib.h>
 
 #include <bluewm.h>
 
@@ -73,6 +74,22 @@ static char current_wifi_interface[IFNAMSIZ + 1] = {0};
 // reports, which is this one on every driver in practice.
 #define WIFI_QUALITY_MAX 70
 
+// The mixer is opened once and kept, as opening and loading it on every draw
+// would be wasteful.
+static snd_mixer_t *volume_mixer = NULL;
+static snd_mixer_elem_t *volume_element = NULL;
+// A mixer that cannot be opened is not tried again, as it would be opened once
+// a second for nothing.
+static bool volume_is_unavailable = false;
+
+#ifndef VOLUME_MIXER_DEVICE
+#define VOLUME_MIXER_DEVICE "default"
+#endif
+
+#ifndef VOLUME_MIXER_ELEMENT
+#define VOLUME_MIXER_ELEMENT "Master"
+#endif
+
 // Where what is drawn on the left of the bar ends, so that what comes after it
 // starts from there, and the title knows where it has to stop.
 static int left_block_end_x = 0;
@@ -104,6 +121,14 @@ static bool get_wifi_ssid__BlueWMBar(const char *interface, char *ssid, size_t s
 static const char *get_wifi_status__BlueWMBar(bool *is_low_p);
 
 static void draw_wifi__BlueWMBar(void);
+
+static snd_mixer_elem_t *find_volume_element__BlueWMBar(void);
+
+static const char *get_volume_status__BlueWMBar(bool *is_muted_p);
+
+static void draw_volume__BlueWMBar(void);
+
+static void close_volume__BlueWMBar(void);
 
 static void draw_date__BlueWMBar(void);
 
@@ -522,6 +547,130 @@ void draw_wifi__BlueWMBar(void)
 	left_block_end_x = status_x + XTextWidth(font, status, status_len);
 }
 
+// ALSA reports its errors on the standard error of the process, which would be
+// the log of the window manager, so it is kept quiet.
+static void handle_alsa_error__BlueWMBar(const char *file, int line, const char *function, int err, const char *format, ...)
+{
+	(void)file;
+	(void)line;
+	(void)function;
+	(void)err;
+	(void)format;
+}
+
+snd_mixer_elem_t *find_volume_element__BlueWMBar(void)
+{
+	if (volume_element) {
+		return volume_element;
+	}
+
+	if (volume_is_unavailable) {
+		return NULL;
+	}
+
+	if (!volume_mixer) {
+		snd_lib_error_set_handler(&handle_alsa_error__BlueWMBar);
+
+		if (snd_mixer_open(&volume_mixer, 0) < 0) {
+			volume_mixer = NULL;
+			volume_is_unavailable = true;
+
+			return NULL;
+		}
+
+		// The default device is the one the sound server puts in front of the
+		// hardware, so it carries the volume the user actually changes.
+		if (snd_mixer_attach(volume_mixer, VOLUME_MIXER_DEVICE) < 0
+				|| snd_mixer_selem_register(volume_mixer, NULL, NULL) < 0
+				|| snd_mixer_load(volume_mixer) < 0) {
+			snd_mixer_close(volume_mixer);
+			volume_mixer = NULL;
+			volume_is_unavailable = true;
+
+			return NULL;
+		}
+	}
+
+	snd_mixer_selem_id_t *id = NULL;
+
+	snd_mixer_selem_id_alloca(&id);
+	snd_mixer_selem_id_set_index(id, 0);
+	snd_mixer_selem_id_set_name(id, VOLUME_MIXER_ELEMENT);
+
+	volume_element = snd_mixer_find_selem(volume_mixer, id);
+
+	return volume_element;
+}
+
+const char *get_volume_status__BlueWMBar(bool *is_muted_p)
+{
+	static char status[16] = {0};
+	snd_mixer_elem_t *element = find_volume_element__BlueWMBar();
+
+	// A machine whose default device has no such control, for the lack of the
+	// plugin of the sound server, has nothing to report.
+	if (!element) {
+		return NULL;
+	}
+
+	// The mixer keeps what it was loaded with, so it is refreshed to see the
+	// changes made by anything else.
+	snd_mixer_handle_events(volume_mixer);
+
+	long min = 0;
+	long max = 0;
+	long value = 0;
+
+	if (snd_mixer_selem_get_playback_volume_range(element, &min, &max) < 0
+			|| snd_mixer_selem_get_playback_volume(element, SND_MIXER_SCHN_FRONT_LEFT, &value) < 0
+			|| max <= min) {
+		return NULL;
+	}
+
+	int is_unmuted = 1;
+
+	if (snd_mixer_selem_has_playback_switch(element)) {
+		snd_mixer_selem_get_playback_switch(element, SND_MIXER_SCHN_FRONT_LEFT, &is_unmuted);
+	}
+
+	*is_muted_p = !is_unmuted;
+
+	// The level is rounded and not truncated, so that a volume set to 40 is not
+	// reported as 39.
+	long level = ((value - min) * 100 + (max - min) / 2) / (max - min);
+
+	snprintf(status, sizeof(status) - 1, *is_muted_p ? "mute" : "vol %ld%%", level);
+
+	return status;
+}
+
+void draw_volume__BlueWMBar(void)
+{
+	bool is_muted = false;
+	const char *status = get_volume_status__BlueWMBar(&is_muted);
+
+	if (!status) {
+		return;
+	}
+
+	size_t status_len = strlen(status);
+	int status_x = left_block_end_x + 2 * WINDOW_PADDING;
+
+	XSetForeground(display, window_gc, is_muted ? BLUE_RGB(255, 0, 0) : BLUE_RGB(255, 255, 255));
+	XDrawString(display, window_pixels, window_gc, status_x, WINDOW_MIDDLE(font), status, status_len);
+
+	left_block_end_x = status_x + XTextWidth(font, status, status_len);
+}
+
+void close_volume__BlueWMBar(void)
+{
+	if (volume_mixer) {
+		snd_mixer_close(volume_mixer);
+		volume_mixer = NULL;
+		volume_element = NULL;
+	}
+}
+
 void draw_date__BlueWMBar(void)
 {
 	struct timeval tv;
@@ -617,6 +766,7 @@ void draw__BlueWMBar(void)
 	draw_keyboard_layout__BlueWMBar();
 	draw_battery__BlueWMBar();
 	draw_wifi__BlueWMBar();
+	draw_volume__BlueWMBar();
 	draw_window_title__BlueWMBar();
 	draw_workspaces_number__BlueWMBar();
 	XCopyArea(display, window_pixels, window, window_gc, 0, 0, window_width, window_height, 0, 0);
@@ -805,6 +955,7 @@ int handle_error__BlueWMBar(Display *error_display, XErrorEvent *error)
 
 void close__BlueWMBar(void)
 {
+	close_volume__BlueWMBar();
 	XFreeGC(display, window_gc);
 	XFreePixmap(display, window_pixels);
 	XFreeFont(display, font);
