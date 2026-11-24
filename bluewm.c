@@ -1003,7 +1003,7 @@ void new_client__BlueWM(Window window, enum BlueWMClientRole role)
 
 void launch_terminal__BlueWM(struct BlueWMScreen *screen)
 {
-	launch_builtin_program__BlueWM("xterm", NULL);
+	launch_builtin_program__BlueWM(TERMINAL, NULL);
 }
 
 void launch_launcher__BlueWM(struct BlueWMScreen *screen)

@@ -34,6 +34,8 @@ struct BlueWMShortcut {
 	bool is_resize;
 };
 
+#define TERMINAL "xterm"
+
 #define BLUE_WM_SHORTCUT(_state, _sym, _handler) ((struct BlueWMShortcut){ .state = _state, .sym = _sym, .handler = _handler })
 
 #define BLUE_WM_SHORTCUT_RESIZE(_sym, _handler) ((struct BlueWMShortcut){ .state = None, .sym = _sym, .handler = _handler, .is_resize = true })
