@@ -40,6 +40,9 @@
 #include <bluewm.h>
 
 #define WINDOW_WIDTH 600
+// The keyboard grab is tried for one second at most.
+#define GRAB_KEYBOARD_TRIES 200
+#define GRAB_KEYBOARD_DELAY_US 5000
 // Number of programs displayed at the same time, under the search bar.
 #define VISIBLE_ENTRY_COUNT 10
 #define ENTRY_PADDING 4
@@ -480,8 +483,25 @@ int main() {
 
 	// The keys are grabbed to not depend on the focus policy of the WM: the
 	// pointer stays free to move over the other windows.
-	if (XGrabKeyboard(display, window, true, GrabModeAsync, GrabModeAsync, CurrentTime) != GrabSuccess) {
+	//
+	// The launcher is opened by a shortcut of the WM, and the WM holds the
+	// keyboard as long as the keys of that shortcut are pressed, so the grab
+	// is tried again until they are released.
+	bool is_grabbed = false;
+
+	for (int i = 0; i < GRAB_KEYBOARD_TRIES && !is_grabbed; ++i) {
+		is_grabbed = XGrabKeyboard(display, window, true, GrabModeAsync, GrabModeAsync, CurrentTime) == GrabSuccess;
+
+		if (!is_grabbed) {
+			usleep(GRAB_KEYBOARD_DELAY_US);
+		}
+	}
+
+	if (!is_grabbed) {
 		BLUE_LOG_WARNING("unable to grab the keyboard\n");
+		// Without the grab, the keys are at least sent to the launcher while
+		// the WM leaves it the focus.
+		XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
 	}
 
 	handle_events__BlueWMLauncher();

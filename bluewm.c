@@ -1655,6 +1655,12 @@ void handle_motion_notify_event__BlueWM(const XEvent *event)
 
 void focus_window__BlueWM(struct BlueWMScreen *screen, Window window)
 {
+	// The launcher keeps the focus while it is open, otherwise passing the
+	// pointer over another window would take the keys away from it.
+	if (screen->launcher) {
+		return;
+	}
+
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 	// Only a regular client can be focused: the dock and the splash are the
 	// only clients out of the workspaces.
@@ -1733,8 +1739,17 @@ void remove_screen_client__BlueWM(struct BlueWMScreen *screen, Window window)
 		struct BlueWMClient *client = *screen_clients[i];
 
 		if (client && client->window == window) {
+			bool is_launcher = client == screen->launcher;
+
 			deinit_client__BlueWM(client);
 			*screen_clients[i] = NULL;
+
+			// The focus goes back to the window that had it before the launcher.
+			if (is_launcher) {
+				const struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+
+				XSetInputFocus(display, workspace->active ? workspace->active->window : PointerRoot, RevertToPointerRoot, CurrentTime);
+			}
 
 			return;
 		}
@@ -1861,8 +1876,9 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 	XMapWindow(display, window);
 
 	// The focus is only given once the client is viewable, as an unviewable
-	// window cannot hold it.
-	if (window_role == BLUE_WM_CLIENT_ROLE_NONE) {
+	// window cannot hold it. The launcher is given it too, so that it can be
+	// typed into even before it grabs the keyboard.
+	if (window_role == BLUE_WM_CLIENT_ROLE_NONE || window_role == BLUE_WM_CLIENT_ROLE_LAUNCHER) {
 		XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
 	}
 }
