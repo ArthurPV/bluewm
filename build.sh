@@ -4,6 +4,11 @@ set -e
 
 FLAGS="-Wall -std=c99 -lX11 -I ."
 
+if [ ! -f config/bluewm.h ]
+then
+	cp config/bluewm.h.def config/bluewm.h
+fi
+
 gcc bluewm.c -o bluewm $FLAGS -lasound
 gcc bluewmbar.c -o bluewmbar $FLAGS -lasound
 gcc bluewmbg.c -o bluewmbg -lspng -ljpeg $FLAGS
