@@ -168,8 +168,64 @@ void fetch_programs_from_dir__BlueWMLauncher(const char *dir_path)
 	closedir(dir);
 }
 
+// Whether `dir` is one of the directories of the colon separated `path`.
+static bool path_contains_dir__BlueWMLauncher(const char *path, const char *dir)
+{
+	size_t dir_len = strlen(dir);
+
+	while (path) {
+		const char *end = strchr(path, ':');
+		size_t len = end ? (size_t)(end - path) : strlen(path);
+
+		if (len == dir_len && strncmp(path, dir, len) == 0) {
+			return true;
+		}
+
+		path = end ? end + 1 : NULL;
+	}
+
+	return false;
+}
+
+// Flatpak exports a command for each of its applications, but its directories
+// are not added to the PATH, so they are added to the PATH of the launcher: the
+// applications are then listed, and found by execlp when they are launched.
+static void add_flatpak_dirs_to_path__BlueWMLauncher(void)
+{
+	char user_dir[PATH_MAX] = {0};
+	const char *home = getenv("HOME");
+	const char *xdg_data_home = getenv("XDG_DATA_HOME");
+
+	if (xdg_data_home && xdg_data_home[0] != '\0') {
+		snprintf(user_dir, sizeof(user_dir), "%s/flatpak/exports/bin", xdg_data_home);
+	} else if (home) {
+		snprintf(user_dir, sizeof(user_dir), "%s/.local/share/flatpak/exports/bin", home);
+	}
+
+	const char *dirs[] = { user_dir, "/var/lib/flatpak/exports/bin" };
+
+	for (size_t i = 0; i < sizeof(dirs) / sizeof(*dirs); ++i) {
+		const char *path = getenv("PATH");
+
+		if (dirs[i][0] == '\0' || (path && path_contains_dir__BlueWMLauncher(path, dirs[i]))) {
+			continue;
+		}
+
+		// The directories are added last, so that a program of the system keeps
+		// the priority over an application of the same name.
+		size_t new_path_len = (path ? strlen(path) + 1 : 0) + strlen(dirs[i]) + 1;
+		char *new_path = BLUE_ALLOC(new_path_len);
+
+		snprintf(new_path, new_path_len, "%s%s%s", path ? path : "", path ? ":" : "", dirs[i]);
+		setenv("PATH", new_path, 1);
+		free(new_path);
+	}
+}
+
 void fetch_programs__BlueWMLauncher(void)
 {
+	add_flatpak_dirs_to_path__BlueWMLauncher();
+
 	const char *path = getenv("PATH");
 
 	if (!path) {
