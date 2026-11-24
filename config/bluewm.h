@@ -51,6 +51,7 @@ static const struct BlueWMShortcut shortcuts[] = {
 	BLUE_WM_SHORTCUT_RESIZE(XK_Down, &resize_window_down__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_f, &toggle_full_screen_window__BlueWM),
 	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_space, &toggle_keyboard_layout__BlueWM),
+	BLUE_WM_SHORTCUT(BLUE_WM_MOVE_WINDOW_MASK, XK_Tab, &focus_next_window__BlueWM),
 	// The media keys of the keyboard carry no modifier of their own.
 	BLUE_WM_SHORTCUT(None, XF86XK_AudioRaiseVolume, &raise_volume__BlueWM),
 	BLUE_WM_SHORTCUT(None, XF86XK_AudioLowerVolume, &lower_volume__BlueWM),

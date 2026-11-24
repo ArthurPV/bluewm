@@ -208,6 +208,8 @@ static void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen);
 
 static void toggle_keyboard_layout__BlueWM(struct BlueWMScreen *screen);
 
+static void focus_next_window__BlueWM(struct BlueWMScreen *screen);
+
 static snd_mixer_elem_t *find_volume_element__BlueWM(void);
 
 static void change_volume__BlueWM(struct BlueWMScreen *screen, int change);
@@ -1187,6 +1189,29 @@ void toggle_full_screen_window__BlueWM(struct BlueWMScreen *screen)
 
 // The layouts are loaded once as the groups of the keyboard, so switching
 // between them is only a matter of locking the next group.
+// Gives the focus to the next window of the workspace, and goes back to the
+// first one after the last. The window is raised as well, so that the window
+// with the focus is always the one that can be seen.
+void focus_next_window__BlueWM(struct BlueWMScreen *screen)
+{
+	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
+
+	if (!workspace->clients) {
+		return;
+	}
+
+	struct BlueWMClient *next = workspace->active && workspace->active->next ? workspace->active->next : workspace->clients;
+
+	if (next == workspace->active) {
+		return;
+	}
+
+	// The decoration is the parent of the client, so raising the client alone
+	// would leave it behind its own frame.
+	XRaiseWindow(display, get_outer_window__BlueWM(next));
+	focus_window__BlueWM(screen, next->window);
+}
+
 void toggle_keyboard_layout__BlueWM(struct BlueWMScreen *screen)
 {
 	XkbStateRec keyboard_state;
