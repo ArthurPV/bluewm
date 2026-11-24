@@ -40,6 +40,7 @@
 #include <string.h>
 #include <alloca.h>
 #include <alsa/asoundlib.h>
+#include <signal.h>
 
 #include <bluewm.h>
 
@@ -389,6 +390,14 @@ launch_builtin_program__BlueWM(const char *cmd, ...)
 	pid_t pid = fork();
 
 	if (pid == 0) {
+		// The child must not share the X connection of the window manager:
+		// two processes reading the same connection desynchronize Xlib.
+		close(ConnectionNumber(display));
+		setsid();
+		// An ignored signal stays ignored across exec, and the launched program
+		// expects the default handling of its own children.
+		signal(SIGCHLD, SIG_DFL);
+
 		va_list vl;
 #define ARGV_LEN 32
 		char const *argv[ARGV_LEN] = {0};
@@ -409,6 +418,11 @@ launch_builtin_program__BlueWM(const char *cmd, ...)
 
 		va_end(vl);
 		execvp(cmd, (char *const*)argv);
+
+		// Never fall back into the loop of the window manager if the program
+		// cannot be executed.
+		BLUE_LOG_WARNING("failed to execute %s\n", cmd);
+		exit(127);
 
 #undef ARGV_LEN
 	} else if (pid == -1) {
@@ -995,39 +1009,54 @@ void launch_launcher__BlueWM(struct BlueWMScreen *screen)
 	launch_builtin_program__BlueWM("bluewmlauncher", NULL);
 }
 
+static void publish_resize_window__BlueWM(const struct BlueWMScreen *screen)
+{
+	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_RESIZE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window_to_resize, 1);
+}
+
+// Leaves the resize mode. The other shortcuts are refused while a window is
+// resized, so the mode must always be left once its window is gone, otherwise
+// they would stay blocked for the whole session.
+static void stop_resize_window__BlueWM(const struct BlueWMScreen *screen)
+{
+	if (window_to_resize == None) {
+		return;
+	}
+
+	window_to_resize = None;
+
+	// The shortcuts without any modifier are only grabbed while resizing a
+	// window, otherwise they would be stolen from every client.
+	ungrab_keys__BlueWM(RootWindow(display, screen->screen_number), false);
+	publish_resize_window__BlueWM(screen);
+}
+
 void toggle_resize_window__BlueWM(struct BlueWMScreen *screen)
 {
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 
-	if (!workspace->active) {
-		goto update_property;
-	} else if (window_to_resize != None) {
+	if (window_to_resize != None) {
 		XWindowAttributes attr;
+		bool is_visible = XGetWindowAttributes(display, window_to_resize, &attr) != 0 && attr.map_state != IsUnmapped;
 
-		if (XGetWindowAttributes(display, window_to_resize, &attr) == 0) {
-			goto out;
+		// A window still visible is the one being resized, so the mode is left.
+		// One that is hidden or gone hands the mode to the active window, if
+		// there is one.
+		if (is_visible || !workspace->active) {
+			stop_resize_window__BlueWM(screen);
+
+			return;
 		}
-
-		if (attr.map_state == IsUnmapped) {
-			goto out;
-		}
-
-		window_to_resize = None;
-
-		// The shortcuts without any modifier are only grabbed while resizing a
-		// window, otherwise they would be stolen from every client.
-		ungrab_keys__BlueWM(RootWindow(display, screen->screen_number), false);
-
-		goto update_property;
 	}
 
-out:
+	if (!workspace->active) {
+		return;
+	}
+
 	window_to_resize = workspace->active->window;
 
 	grab_keys__BlueWM(RootWindow(display, screen->screen_number), false);
-
-update_property:
-	XChangeProperty(display, RootWindow(display, screen->screen_number), atoms[BLUE_WM_ATOM_RESIZE_WINDOW], XA_WINDOW, 32, PropModeReplace, (unsigned char*)&window_to_resize, 1);
+	publish_resize_window__BlueWM(screen);
 }
 
 void resize_window__BlueWM(struct BlueWMScreen *screen, int width_change, int height_change)
@@ -1714,6 +1743,11 @@ void remove_screen_client__BlueWM(struct BlueWMScreen *screen, Window window)
 
 void remove_client__BlueWM(struct BlueWMScreen *screen, Window window)
 {
+	// A window closed while it is resized must not leave the resize mode on.
+	if (window != None && window == window_to_resize) {
+		stop_resize_window__BlueWM(screen);
+	}
+
 	struct BlueWMWorkspace *workspace = &workspaces[screen->workspace];
 	struct BlueWMClient *removed_client = remove_client_from_window__BlueWM(workspace, window);
 
@@ -1811,7 +1845,11 @@ void handle_map_request_event__BlueWM(const XEvent *event)
 
 	// The enter events are what drives the focus follow the pointer, and they
 	// are only received by selecting them on the client itself.
-	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | EnterWindowMask | PropertyChangeMask);
+	//
+	// The button events are not selected: only one client can select the button
+	// presses of a window, so a client selecting them itself (as st does) makes
+	// the request fail with BadAccess. They are received through the root grab.
+	XSelectInput(display, window, KeyPressMask | KeyReleaseMask | EnterWindowMask | PropertyChangeMask);
 
 	// The client is taken in charge here, and not on its map notification,
 	// because only the map requests are limited to the windows the window
@@ -2031,6 +2069,9 @@ int main() {
 	if (!(display = XOpenDisplay(NULL))) {
 		BLUE_LOG_ERROR("unable to open display\n");
 	}
+
+	// The launched programs are reaped automatically instead of staying zombies.
+	signal(SIGCHLD, SIG_IGN);
 
 	default_handle_error__BlueWM = XSetErrorHandler(&handle_error__BlueWM);
 	init_decoration__BlueWM();
